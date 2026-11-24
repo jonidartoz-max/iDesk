@@ -9,15 +9,16 @@ final class LaptopModeController: UIViewController {
     private var desktopSize = RemoteDisplay.shared.desktopSize
     private var sizeWatch: AnyCancellable?
     private lazy var host = UIHostingController(rootView: DesktopView(model: model))
-    private lazy var header = UIHostingController(rootView: LaptopHeader())
-    private lazy var footer = UIHostingController(rootView: LaptopFooter { [weak self] in self?.stop() })
+    private lazy var bar = UIHostingController(rootView: LaptopBar { [weak self] in self?.stop() })
     /// The rounded, lit frame the small desktop sits in.
     private let card = UIView()
     private var lastPan: CGPoint = .zero
+    private var lastDrag: CGPoint = .zero
+    private lazy var momentum = ScrollMomentum { [weak self] dx, dy in self?.model.scroll(dx: dx, dy: dy) }
 
     /// Starts laptop mode on the iPhone (only without a real display: a cable or AirPlay is better).
     static func present() {
-        guard !DesktopModel.shared.isExternalConnected, var top = PhoneWindow.current?.rootViewController else { return }
+        guard !ExternalDisplay.isConnected, var top = PhoneWindow.current?.rootViewController else { return }
         while let p = top.presentedViewController, !p.isBeingDismissed { top = p }
         let vc = LaptopModeController()
         vc.modalPresentationStyle = .fullScreen
@@ -30,12 +31,10 @@ final class LaptopModeController: UIViewController {
         overrideUserInterfaceStyle = .dark
         model.screenSize = desktopSize
 
-        for hc in [header, footer] as [UIViewController] {
-            addChild(hc)
-            hc.view.backgroundColor = .clear
-            view.addSubview(hc.view)
-            hc.didMove(toParent: self)
-        }
+        addChild(bar)
+        bar.view.backgroundColor = .clear
+        view.addSubview(bar.view)
+        bar.didMove(toParent: self)
         card.backgroundColor = UIColor(white: 0.08, alpha: 1)
         card.layer.cornerRadius = 16
         card.layer.cornerCurve = .continuous
@@ -61,12 +60,19 @@ final class LaptopModeController: UIViewController {
         shield.tag = 7
         view.addSubview(shield)
         shield.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
+        // One finger scrolls what is under the pointer (naturally, with momentum): the everyday gesture.
         let pan = UIPanGestureRecognizer(target: self, action: #selector(panned))
         pan.maximumNumberOfTouches = 1
         shield.addGestureRecognizer(pan)
+        // Two fingers move the pointer and drag: windows, scrollbars, text selection.
+        let drag = UIPanGestureRecognizer(target: self, action: #selector(dragged))
+        drag.minimumNumberOfTouches = 2
+        drag.maximumNumberOfTouches = 2
+        shield.addGestureRecognizer(drag)
+        // Touch and hold = right click. Short and tolerant: a finger is never perfectly still.
         let hold = UILongPressGestureRecognizer(target: self, action: #selector(held))
-        hold.minimumPressDuration = 0.6
-        pan.require(toFail: hold)
+        hold.minimumPressDuration = 0.3
+        hold.allowableMovement = 24
         shield.addGestureRecognizer(hold)
 
         model.externalConnected()
@@ -84,12 +90,11 @@ final class LaptopModeController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let safe = view.safeAreaLayoutGuide.layoutFrame
-        let headerHeight: CGFloat = 250, footerHeight: CGFloat = 96
-        header.view.frame = CGRect(x: safe.minX, y: safe.minY, width: safe.width, height: headerHeight)
-        footer.view.frame = CGRect(x: safe.minX, y: safe.maxY - footerHeight, width: safe.width, height: footerHeight)
-        // The desktop, as large as fits between them, in the middle.
-        let area = CGRect(x: safe.minX + 20, y: safe.minY + headerHeight, width: safe.width - 40,
-                          height: safe.height - headerHeight - footerHeight).insetBy(dx: 0, dy: 10)
+        // One compact bar on top (address + Stop); the desktop card takes everything else.
+        let barHeight: CGFloat = 56
+        bar.view.frame = CGRect(x: safe.minX, y: safe.minY, width: safe.width, height: barHeight)
+        let area = CGRect(x: safe.minX + 12, y: safe.minY + barHeight, width: safe.width - 24,
+                          height: safe.height - barHeight).insetBy(dx: 0, dy: 8)
         let s = min(area.width / desktopSize.width, area.height / desktopSize.height)
         let w = desktopSize.width * s, h = desktopSize.height * s
         let frame = CGRect(x: area.midX - w / 2, y: area.midY - h / 2, width: w, height: h)
@@ -102,9 +107,16 @@ final class LaptopModeController: UIViewController {
 
     private func stop() {
         sizeWatch = nil
+        momentum.cancel()
         RemoteDisplay.shared.stop()
-        model.externalDisconnected()
         if ExternalSceneDelegate.desktopView === host.view { ExternalSceneDelegate.desktopView = nil }
+        // The phone's own desktop (PreviewController) stays alive underneath: hand the display role back to it.
+        if let preview = PhoneWindow.current?.rootViewController as? PreviewController {
+            model.externalConnected()
+            preview.reclaimDesktopView()
+        } else {
+            model.externalDisconnected()
+        }
         dismiss(animated: true)
     }
 
@@ -121,7 +133,25 @@ final class LaptopModeController: UIViewController {
         model.rightClick()
     }
 
+    /// One finger: natural scrolling at exactly the finger's speed (the points are the small desktop's own,
+    /// so content follows the finger one to one), gliding on after the lift like a scroll view.
     @objc private func panned(_ g: UIPanGestureRecognizer) {
+        let p = point(g)
+        switch g.state {
+        case .began:
+            momentum.cancel()
+            model.cursor.position = p
+        case .changed:
+            model.scroll(dx: -(p.x - lastPan.x), dy: -(p.y - lastPan.y))
+        default:
+            let v = g.velocity(in: host.view)
+            momentum.start(vx: -v.x, vy: -v.y)
+        }
+        lastPan = p
+    }
+
+    /// Two fingers: the pointer itself — press, drag and drop on the desktop.
+    @objc private func dragged(_ g: UIPanGestureRecognizer) {
         let p = point(g)
         switch g.state {
         case .began:
@@ -130,71 +160,55 @@ final class LaptopModeController: UIViewController {
             model.mouseDown()
             model.moveCursor(dx: t.x, dy: t.y)
         case .changed:
-            model.moveCursor(dx: p.x - lastPan.x, dy: p.y - lastPan.y)
+            model.moveCursor(dx: p.x - lastDrag.x, dy: p.y - lastDrag.y)
         default:
             model.mouseUp()
         }
-        lastPan = p
+        lastDrag = p
     }
 }
 
-/// The top of the iPhone in laptop mode: what to open on the laptop, and whether it is connected.
-private struct LaptopHeader: View {
+/// The compact bar on top of the iPhone in laptop mode: the address to open on the laptop, the connection
+/// dot, and Stop. Everything else on the screen is the desktop card.
+private struct LaptopBar: View {
     @ObservedObject var remote = RemoteDisplay.shared
     @State private var copied = false
+    let stop: () -> Void
 
     var body: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "laptopcomputer")
-                .font(.system(size: 30, weight: .light))
-                .foregroundStyle(.tint)
-                .frame(width: 64, height: 64)
-                .background(Circle().fill(Color.accentColor.opacity(0.15)))
-            Text("Laptop as the display").font(.title3.weight(.semibold))
+        HStack(spacing: 10) {
+            Circle().fill(remote.viewers > 0 ? Color.green : Color.orange).frame(width: 8, height: 8)
             if let failure = remote.failure {
-                Text(verbatim: failure).font(.footnote).foregroundStyle(.orange).multilineTextAlignment(.center)
+                Text(verbatim: failure).font(.caption).foregroundStyle(.orange).lineLimit(2)
             } else if let address = remote.address {
                 Button {
                     UIPasteboard.general.string = address
                     copied = true
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
                 } label: {
-                    HStack(spacing: 10) {
+                    HStack(spacing: 6) {
                         Text(verbatim: address.replacingOccurrences(of: "http://", with: ""))
-                            .font(.system(.title3, design: .monospaced).weight(.semibold))
+                            .font(.system(.callout, design: .monospaced).weight(.semibold))
                             .lineLimit(1).minimumScaleFactor(0.6)
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.subheadline)
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.caption)
                     }
                     .foregroundStyle(.primary)
-                    .padding(.horizontal, 18).padding(.vertical, 11)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
                     .background(Capsule().fill(Color.white.opacity(0.08)))
-                    .overlay(Capsule().stroke(Color.white.opacity(0.12)))
                 }
                 .buttonStyle(.plain)
-                HStack(spacing: 7) {
-                    Circle().fill(remote.viewers > 0 ? Color.green : Color.orange).frame(width: 8, height: 8)
-                    Text(remote.viewers > 0 ? "Connected" : "Open it in the laptop's browser")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
             } else {
-                Text("Join the same Wi-Fi as the laptop.").font(.footnote).foregroundStyle(.orange)
+                Text("Join the same Wi-Fi as the laptop.").font(.caption).foregroundStyle(.orange)
             }
+            Spacer(minLength: 8)
+            Button(action: stop) {
+                Text("Stop").font(.subheadline.weight(.semibold)).foregroundStyle(.red)
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .background(Capsule().fill(Color.red.opacity(0.14)))
+            }
+            .buttonStyle(.plain)
         }
-        .padding(.horizontal, 24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-private struct LaptopFooter: View {
-    let stop: () -> Void
-    var body: some View {
-        Button(action: stop) {
-            Text("Stop").font(.headline).foregroundStyle(.red)
-                .frame(maxWidth: .infinity).padding(.vertical, 15)
-                .background(Capsule().fill(Color.red.opacity(0.14)))
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 40)
+        .padding(.horizontal, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

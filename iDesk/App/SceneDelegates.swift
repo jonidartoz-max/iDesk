@@ -1,7 +1,8 @@
 import UIKit
 import SwiftUI
 
-/// iPhone screen: trackpad + address bar + keyboard.
+/// iPhone screen: the desktop itself, fullscreen (PreviewController). The trackpad + keyboard screen
+/// (ControllerView) is still there for an external display: Settings on the desktop → iPhone.
 final class PhoneSceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
 
@@ -9,9 +10,7 @@ final class PhoneSceneDelegate: UIResponder, UIWindowSceneDelegate {
                options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
         let window = PhoneWindow(windowScene: windowScene)
-        window.rootViewController = PreviewController.isRequested
-            ? PreviewController()
-            : PhoneHostingController(rootView: ControllerView(model: .shared))
+        window.rootViewController = PreviewController()
         window.makeKeyAndVisible()
         PhoneWindow.current = window
         window.claimKeyboard()
@@ -46,6 +45,19 @@ final class PhoneSceneDelegate: UIResponder, UIWindowSceneDelegate {
             #endif
             DesktopModel.shared.notice = GuestStore.summary(of: results, next: next)
         }
+    }
+}
+
+/// Shows the trackpad + keyboard screen from the desktop (Settings → iPhone). It closes with its own
+/// back button, returning to the desktop.
+enum PhoneController {
+    static func present() {
+        guard var top = PhoneWindow.current?.rootViewController else { return }
+        while let p = top.presentedViewController, !p.isBeingDismissed { top = p }
+        guard !(top is PhoneHostingController) else { return }
+        let vc = PhoneHostingController(rootView: ControllerView(model: .shared))
+        vc.modalPresentationStyle = .fullScreen
+        top.present(vc, animated: true)
     }
 }
 

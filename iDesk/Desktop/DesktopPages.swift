@@ -294,6 +294,10 @@ enum DesktopPages {
         case (.settings, "autoUpdate"): UpdateChecker.shared.automatic.toggle()
         case (.settings, "checkUpdate"): UpdateChecker.shared.check(userAsked: true)
         case (.settings, "downloadUpdate"): UpdateChecker.shared.download()
+        case (.settings, "laptopMode"):
+            LaptopModeController.present()
+        case (.settings, "controller"):
+            PhoneController.present()
         case (.settings, "guide"):
             m.phoneSheet = .welcome
             m.showToast(String(localized: "The guide is open on the iPhone."))
@@ -484,6 +488,9 @@ enum DesktopPages {
             "scroll": String(localized: "Scrolling speed"), "reset": String(localized: "Reset to defaults"),
             "accessibility": String(localized: "Accessibility"),
             "mouseModeButton": String(localized: "Always show the mouse mode button"),
+            "iphone": String(localized: "iPhone"),
+            "laptopMode": String(localized: "Use a laptop as the display"),
+            "controllerMode": String(localized: "Trackpad and keyboard screen"),
             "about": String(localized: "Version"),
         ]
         let initial = json(state(page)), t = json(strings)
@@ -654,6 +661,9 @@ enum DesktopPages {
         + `<div class="row"><div class="label"></div><button onclick="send('resetSpeeds')">${esc(T.reset)}</button></div></div>`;
       h += `<h2>${esc(T.accessibility)}</h2><div class="card">` + toggle('mouseModeButton', s.mouseModeButton, T.mouseModeButton)
         + `</div>`;
+      h += `<h2>${esc(T.iphone)}</h2><div class="card">`
+        + `<div class="row"><div class="label">${esc(T.laptopMode)}</div><button onclick="send('laptopMode')">${esc(T.openBrowser)}</button></div>`
+        + `<div class="row"><div class="label">${esc(T.controllerMode)}</div><button onclick="send('controller')">${esc(T.openBrowser)}</button></div></div>`;
       h += `<h2>${esc(T.help)}</h2><div class="card"><div class="row"><div class="label">${esc(T.guideNote)}</div>`
         + `<button onclick="send('guide')">${esc(T.guide)}</button></div></div>`;
       h += `<div class="card">` + toggle('autoUpdate', s.autoUpdate, T.autoUpdateLabel)

@@ -18,6 +18,7 @@ struct ControllerView: View {
     @State private var assistiveTouch = UIAccessibility.isAssistiveTouchRunning
     @AppStorage(InputSettings.alwaysShowMouseModeKey) private var alwaysShowMouseMode = false
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.dismiss) private var dismiss
     @ObservedObject private var voice = VoiceTyping.shared
     @FocusState private var field: Field?
 
@@ -223,6 +224,11 @@ struct ControllerView: View {
                 .font(.subheadline.weight(.medium))
             Spacer()
             Text("\(model.windows.count) windows").font(.caption).foregroundStyle(.secondary)
+            Button { dismiss() } label: {
+                Image(systemName: "chevron.down.circle.fill").font(.title3).foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("Back to the desktop"))
         }
         .accessibilityElement(children: .combine)
         deviceStatus

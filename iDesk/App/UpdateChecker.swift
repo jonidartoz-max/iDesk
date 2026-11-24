@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Looks for a newer iDesk on GitHub Releases (itshieuk/iDesk): at launch and on return, at most hourly, unless off in
+/// Looks for a newer iDesk on GitHub Releases (jonidartoz-max/iDesk, the mod fork): at launch and on return, at most hourly, unless off in
 /// Settings → Help, and from "Check for updates" there. Nothing is sent but the request itself.
 final class UpdateChecker: ObservableObject {
     static let shared = UpdateChecker()
@@ -19,7 +19,7 @@ final class UpdateChecker: ObservableObject {
         didSet { UserDefaults.standard.set(dismissedVersion, forKey: Self.dismissedKey) }
     }
 
-    private static let api = URL(string: "https://api.github.com/repos/itshieuk/iDesk/releases/latest")!
+    private static let api = URL(string: "https://api.github.com/repos/jonidartoz-max/iDesk/releases/latest")!
     private static let autoKey = "iDesk.checkUpdates", lastKey = "iDesk.lastUpdateCheck", dismissedKey = "iDesk.updateDismissed"
 
     static var current: String {
@@ -77,7 +77,7 @@ final class UpdateChecker: ObservableObject {
 
     /// github.com/<repo>/releases/latest → …/releases/tag/vX.Y.Z; the IPA's name follows the release workflow.
     private func checkByRedirect(userAsked: Bool) {
-        var request = URLRequest(url: URL(string: "https://github.com/itshieuk/iDesk/releases/latest")!, timeoutInterval: 15)
+        var request = URLRequest(url: URL(string: "https://github.com/jonidartoz-max/iDesk/releases/latest")!, timeoutInterval: 15)
         request.httpMethod = "HEAD"
         request.setValue("iDesk", forHTTPHeaderField: "User-Agent")
         URLSession.shared.dataTask(with: request) { _, response, _ in
@@ -91,7 +91,7 @@ final class UpdateChecker: ObservableObject {
                 }
                 let tag = final.lastPathComponent
                 let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
-                let ipa = URL(string: "https://github.com/itshieuk/iDesk/releases/download/\(tag)/iDesk-\(version).ipa")
+                let ipa = URL(string: "https://github.com/jonidartoz-max/iDesk/releases/download/\(tag)/iDesk-\(version).ipa")
                 self.found(tag: tag, page: final, ipa: ipa, userAsked: userAsked)
             }
         }.resume()

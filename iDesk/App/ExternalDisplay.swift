@@ -17,6 +17,9 @@ enum ExternalDisplay {
 
     static func disconnected() { screen = nil }
 
+    /// A real display is attached by cable or AirPlay.
+    static var isConnected: Bool { screen != nil }
+
     /// The resolutions the display offers, largest first (each size once).
     static var resolutions: [CGSize] {
         guard let screen else { return [] }
