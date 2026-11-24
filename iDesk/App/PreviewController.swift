@@ -102,7 +102,7 @@ final class PreviewController: UIViewController {
         guard safe.width > 0, safe.height > 0 else { return }
         // Follow the phone's shape (portrait or landscape), the long side at most 2.5× the short one.
         let r = min(2.5, max(1.3, max(safe.width, safe.height) / min(safe.width, safe.height)))
-        let base: CGFloat = 604
+        let base: CGFloat = 560       // matches the v5 device-proven UI scale (P4)
         let size = safe.height >= safe.width
             ? CGSize(width: base, height: (base * r).rounded())
             : CGSize(width: (base * r).rounded(), height: base)

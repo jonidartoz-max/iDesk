@@ -1296,6 +1296,42 @@ final class DesktopModel: ObservableObject {
         return false
     }
 
+    /// Debug builds diff SwiftUI slowly; publishing window frames at input rate (60-120/s) makes drags
+    /// and pinch resizes stutter. Coalesce frame publishes to ~30/s: steady pacing feels smoother than
+    /// an uneven rate. Always flushes the latest frame within a tick and on gesture end.
+    private var lastFramePublish: CFAbsoluteTime = 0
+    private var pendingFrame: (DeskWindow, CGRect)?
+    private var frameFlushWork: DispatchWorkItem?
+
+    func setWindowFrame(_ w: DeskWindow, _ f: CGRect, flush: Bool = false) {
+        frameFlushWork?.cancel()
+        if flush {
+            pendingFrame = nil
+            lastFramePublish = CFAbsoluteTimeGetCurrent()
+            w.frame = f
+            return
+        }
+        let now = CFAbsoluteTimeGetCurrent()
+        if now - lastFramePublish >= 1.0 / 30 {
+            lastFramePublish = now
+            pendingFrame = nil
+            w.frame = f
+        } else {
+            pendingFrame = (w, f)
+            let work = DispatchWorkItem { [weak self] in self?.flushPendingFrame() }
+            frameFlushWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 30, execute: work)
+        }
+    }
+
+    func flushPendingFrame() {
+        frameFlushWork?.cancel()
+        guard let (w, f) = pendingFrame else { return }
+        pendingFrame = nil
+        lastFramePublish = CFAbsoluteTimeGetCurrent()
+        w.frame = f
+    }
+
     /// Continuous pinch resize (his ask): the window under the fingers follows the pinch freely,
     /// growing or shrinking with the gesture — not just maximize/restore. A small deadzone keeps a
     /// two-finger scroll from nudging the size; once the resize bites, scrolling yields to it.
@@ -1340,8 +1376,9 @@ final class DesktopModel: ObservableObject {
             f.size.height = min(max(widenBegin.height * s, Layout.minWindowSize.height), area.height)
             f.origin.x = min(max(widenBegin.midX - f.width / 2, area.minX), area.maxX - f.width)
             f.origin.y = min(max(widenBegin.midY - f.height / 2, area.minY), area.maxY - f.height)
-            w.frame = f
+            setWindowFrame(w, f)
         default:
+            flushPendingFrame()
             if widenID != nil, widenArmed { scheduleSave() }
             widenID = nil
             widenArmed = false
@@ -1733,8 +1770,10 @@ final class DesktopModel: ObservableObject {
             guard let w = window(id) else { return }
             // Some of the title bar always stays on screen, so the window can be dragged back.
             let keep: CGFloat = 120
-            w.frame.origin = CGPoint(x: min(max(p.x - offset.x, keep - w.frame.width), screenSize.width - keep),
-                                     y: max(0, min(p.y - offset.y, taskbarTop - Layout.titleBar)))
+            var mf = w.frame
+            mf.origin = CGPoint(x: min(max(p.x - offset.x, keep - w.frame.width), screenSize.width - keep),
+                                y: max(0, min(p.y - offset.y, taskbarTop - Layout.titleBar)))
+            setWindowFrame(w, mf)
             // Dragged to the left/right edge: half the screen; near a corner of it: a quarter.
             // To the top edge: maximize.
             let top = p.y < desktopArea.height * 0.2, bottom = p.y > desktopArea.height * 0.8
@@ -1928,6 +1967,7 @@ final class DesktopModel: ObservableObject {
     }
 
     func mouseUp() {
+        flushPendingFrame()
         cursor.isPressed = false
         if let c = capture, c.start != nil {
             // A real area: captured. A press without moving: click() captures the window under the pointer.

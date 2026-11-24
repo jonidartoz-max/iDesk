@@ -11,6 +11,41 @@ struct ControllerView: View {
     @State private var showApps = false
     @State private var showSettings = false
     @State private var showMouseCheck = false
+    @State private var showShortcuts = false
+
+    /// Every gesture and key the desktop actually answers to, in one place.
+    private var shortcutsSheet: some View {
+        NavigationStack {
+            List {
+                Section("Touch") {
+                    shortcut("Tap", "Click")
+                    shortcut("Hold a moment", "Right click")
+                    shortcut("One finger", "Scroll what's under it, following the finger")
+                    shortcut("Two fingers", "Move the pointer, drag and drop")
+                    shortcut("Pinch on a window", "Resize it freely — spread to grow, close to shrink")
+                }
+                Section("Keyboard") {
+                    shortcut("⌘ Tab or Alt Tab", "Recent apps")
+                    shortcut("Esc", "Close menus and panels")
+                }
+                Section("Mouse") {
+                    shortcut("Shake the mouse", "Magnify the pointer to find it")
+                    shortcut("Right click the desktop", "Wallpaper, widgets and settings")
+                }
+            }
+            .navigationTitle("Shortcuts")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .preferredColorScheme(.dark)
+        .presentationDetents([.medium, .large])
+    }
+
+    private func shortcut(_ keys: String, _ action: LocalizedStringKey) -> some View {
+        HStack {
+            Text(keys).font(.subheadline.monospaced()).frame(minWidth: 120, alignment: .leading)
+            Text(action).font(.subheadline).foregroundStyle(.secondary)
+        }
+    }
     /// The first-run guide, shown once (not in preview mode, which tests the desktop).
     @State private var showWelcome = !UserDefaults.standard.bool(forKey: WelcomeView.seenKey) && !PreviewController.isRequested
     /// Mouse mode: iPhone held in landscape, the whole screen mirrors the desktop for the AssistiveTouch pointer.
@@ -88,6 +123,7 @@ struct ControllerView: View {
         .sheet(isPresented: $showApps) { AppsSheet(model: model) }
         .sheet(isPresented: $showSettings) { SettingsSheet(model: model) }
         .sheet(isPresented: $showMouseCheck) { MouseCheckView() }
+        .sheet(isPresented: $showShortcuts) { shortcutsSheet }
         .fullScreenCover(isPresented: $showWelcome) { WelcomeView() }
         .onChange(of: showWelcome) { _, _ in updateKeyboardMode() }
         .alert("iDesk", isPresented: Binding(get: { model.notice != nil && !showApps && !showSettings && !showWelcome },
@@ -166,6 +202,10 @@ struct ControllerView: View {
                 roundButton(symbol: "gearshape", label: "Settings", caption: "Settings",
                             hint: "Brightness, wallpaper, pointer speed") {
                     if model.isExternalConnected { model.openPage(.settings) } else { showSettings = true }
+                }
+                roundButton(symbol: "command", label: "Shortcuts", caption: "Keys",
+                            hint: "Touch, trackpad and keyboard shortcuts") {
+                    showShortcuts = true
                 }
                 if showMouseModeButton {
                     roundButton(symbol: mouseMode ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
