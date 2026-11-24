@@ -1282,8 +1282,32 @@ final class DesktopModel: ObservableObject {
 
     func minimize(_ w: DeskWindow) {
         w.isMinimized = true
+        minimizeStack.removeAll { $0 == w.id }
+        minimizeStack.append(w.id)
         if focusedID == w.id { focusedID = windows.last(where: { $0.isShown })?.id }
         scheduleSave()
+    }
+
+    /// Two-finger pinch on the desktop: close the fingers to minimize the window under them (or the
+    /// focused window), open them to bring back the window that was minimized most recently.
+    /// Fires once per gesture, past a deliberate threshold so an accidental twitch never triggers it.
+    private var pinchConsumed = false
+    private var minimizeStack: [UUID] = []
+
+    func pinch(scale: CGFloat, at p: CGPoint, state: UIGestureRecognizer.State) {
+        if state == .began { pinchConsumed = false }
+        guard state == .changed, !pinchConsumed else { return }
+        if scale <= 0.72 {
+            guard let w = topWindow(at: p) ?? focused, !w.isFullscreen else { return }
+            pinchConsumed = true
+            minimize(w)
+        } else if scale >= 1.4 {
+            pinchConsumed = true
+            while let id = minimizeStack.popLast() {
+                if let w = window(id), w.isMinimized { focus(w); return }
+            }
+            if let w = windows.last(where: { $0.isMinimized && $0.workspace == workspace }) { focus(w) }
+        }
     }
 
     /// The window covers the whole external display (taskbar included) when the page requests fullscreen.

@@ -69,6 +69,11 @@ final class LaptopModeController: UIViewController {
         drag.minimumNumberOfTouches = 2
         drag.maximumNumberOfTouches = 2
         shield.addGestureRecognizer(drag)
+        // Pinch: close two fingers to minimize the window under them, open to bring it back. Two-finger
+        // dragging waits a beat to make sure it is not a pinch first.
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(pinched))
+        shield.addGestureRecognizer(pinch)
+        drag.require(toFail: pinch)
         // Touch and hold = right click. Short and tolerant: a finger is never perfectly still.
         let hold = UILongPressGestureRecognizer(target: self, action: #selector(held))
         hold.minimumPressDuration = 0.3
@@ -148,6 +153,10 @@ final class LaptopModeController: UIViewController {
             momentum.start(vx: -v.x, vy: -v.y)
         }
         lastPan = p
+    }
+
+    @objc private func pinched(_ g: UIPinchGestureRecognizer) {
+        model.pinch(scale: g.scale, at: point(g), state: g.state)
     }
 
     /// Two fingers: the pointer itself — press, drag and drop on the desktop.

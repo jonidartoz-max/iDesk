@@ -4,7 +4,8 @@ import Combine
 
 /// The desktop on the iPhone itself: fullscreen, in portrait or landscape, controlled by touching it directly.
 /// This is how iDesk opens; the trackpad/keyboard screen and laptop mode are reachable from Settings on the desktop.
-/// Tap = click, one finger = move the pointer and drag, two fingers = scroll (with momentum), hold = right click.
+/// Tap = click, one finger = move the pointer and drag, two fingers = scroll (with momentum), hold = right click,
+/// pinch closed = minimize the window under the fingers, pinch open = bring the last minimized window back.
 /// The `-iDeskPreview` launch argument still works; add `-iDeskInstall <path.ipa> [more.ipa…]` to install and open
 /// apps, or `-iDeskOpen <url>` to open a web page.
 final class PreviewController: UIViewController {
@@ -52,6 +53,11 @@ final class PreviewController: UIViewController {
         let scroll = UIPanGestureRecognizer(target: self, action: #selector(scrolled))
         scroll.minimumNumberOfTouches = 2
         shield.addGestureRecognizer(scroll)
+        // Pinch: close two fingers to minimize the window under them, open to bring it back. Two-finger
+        // scrolling waits a beat to make sure it is not a pinch first.
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(pinched))
+        shield.addGestureRecognizer(pinch)
+        scroll.require(toFail: pinch)
         // Touch and hold = right click (context menus). Short and tolerant: a finger is never perfectly still.
         let hold = UILongPressGestureRecognizer(target: self, action: #selector(held))
         hold.minimumPressDuration = 0.3
@@ -156,6 +162,10 @@ final class PreviewController: UIViewController {
             model.mouseUp()
         }
         lastPan = p
+    }
+
+    @objc private func pinched(_ g: UIPinchGestureRecognizer) {
+        model.pinch(scale: g.scale, at: desktopPoint(g), state: g.state)
     }
 
     @objc private func scrolled(_ g: UIPanGestureRecognizer) {
