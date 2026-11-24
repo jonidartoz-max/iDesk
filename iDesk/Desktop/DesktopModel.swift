@@ -227,6 +227,7 @@ final class DesktopModel: ObservableObject {
         Shortcut(name: String(localized: "Browser"), symbol: "globe", url: "https://www.google.com", hue: 0.60),
         Shortcut(name: String(localized: "Files"), symbol: "folder.fill", url: DesktopPage.files.url.absoluteString, hue: 0.57),
         Shortcut(name: String(localized: "Settings"), symbol: "gearshape.fill", url: DesktopPage.settings.url.absoluteString, hue: 0.0),
+        Shortcut(name: String(localized: "Calendar"), symbol: "calendar", url: DesktopPage.calendar.url.absoluteString, hue: 0.05),
         Shortcut(name: String(localized: "Trash"), symbol: "trash.fill", url: trashURL, hue: 0.0),
     ]
     /// The Trash's desktop icon opens Files at the Trash (FilesExtras.swift).
@@ -635,6 +636,8 @@ final class DesktopModel: ObservableObject {
             if let w = windows.last(where: { $0.systemPage == .files }) { w.showFolder(path) }
             return
         }
+        if EpubReader.isBook(url) { openWindow(EpubReader.url(for: path)); return }
+        if OfficeViewer.canShow(url) { openWindow(OfficeViewer.url(for: path)); return }
         if TextEditor.canEdit(url) { openWindow(TextEditor.url(for: path)); return }
         openWindow(url)
     }
@@ -1017,9 +1020,10 @@ final class DesktopModel: ObservableObject {
         let page = DesktopPage(url)
         // iDesk's own pages (Files, Settings, Apps): one window each, brought to the front if already open;
         // they are light, so the window limit does not apply to them.
-        // (The editor: one window per file.)
-        if let page, let w = windows.first(where: { w in w.tab(showing: page) != nil && (page != .editor || w.tabs.contains { $0.url == url }) }),
-           let i = page == .editor ? w.tabs.firstIndex(where: { $0.url == url }) : w.tab(showing: page) {
+        // (The editor and the reader: one window per file.)
+        if let page, let w = windows.first(where: { w in w.tab(showing: page) != nil &&
+            (page != .editor && page != .reader && page != .office || w.tabs.contains { $0.url == url }) }),
+           let i = (page == .editor || page == .reader || page == .office) ? w.tabs.firstIndex(where: { $0.url == url }) : w.tab(showing: page) {
             w.selectTab(i)
             focus(w)
             return

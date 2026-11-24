@@ -5,7 +5,7 @@ import WebKit
 /// iDesk's own pages, shown in ordinary desktop windows so they work with the pointer and keyboard like any page:
 /// Files (idesk://files), Settings (idesk://settings), Apps (idesk://apps), Bookmarks and history (idesk://history).
 enum DesktopPage: String {
-    case files, settings, apps, history, editor
+    case files, settings, apps, history, editor, reader, office, calendar
     /// The browser's own settings (ads, dark pages, bookmarks bar): from ⋯ in a browser window.
     case browser
 
@@ -19,6 +19,9 @@ enum DesktopPage: String {
         case .apps: return String(localized: "Apps")
         case .history: return String(localized: "Bookmarks and history")
         case .editor: return String(localized: "Text editor")
+        case .reader: return String(localized: "Reader")
+        case .office: return String(localized: "Document viewer")
+        case .calendar: return String(localized: "Calendar")
         case .browser: return String(localized: "Browser settings")
         }
     }
@@ -30,6 +33,9 @@ enum DesktopPage: String {
         case .apps: return "shippingbox.fill"
         case .history: return "book.fill"
         case .editor: return "doc.text.fill"
+        case .reader: return "book.closed.fill"
+        case .office: return "doc.richtext.fill"
+        case .calendar: return "calendar"
         case .browser: return "globe"
         }
     }
@@ -49,6 +55,9 @@ enum DesktopPage: String {
         case .apps: return CGSize(width: 700, height: 680)
         case .history: return CGSize(width: 780, height: 720)
         case .editor: return CGSize(width: 820, height: 680)
+        case .reader: return CGSize(width: 780, height: 720)
+        case .office: return CGSize(width: 820, height: 720)
+        case .calendar: return CGSize(width: 760, height: 700)
         case .browser: return CGSize(width: 620, height: 700)
         }
     }
@@ -62,12 +71,22 @@ enum DesktopPage: String {
         case .editor:
             let address = address ?? url
             webView.loadHTMLString(TextEditor.html(for: address), baseURL: address)
+        case .reader:
+            let address = address ?? url
+            webView.loadHTMLString(EpubReader.html(for: address), baseURL: EpubReader.baseURL(for: address))
+        case .office:
+            let address = address ?? url
+            webView.loadHTMLString(OfficeViewer.html(for: address), baseURL: address)
+        case .calendar:
+            webView.loadHTMLString(calendarHTML(), baseURL: url)
         }
     }
 
     /// The window's title: the app's name, or the file an editor shows.
     func windowTitle(for address: URL?) -> String {
         if self == .editor, let path = address.flatMap(TextEditor.path(of:)) { return (path as NSString).lastPathComponent }
+        if self == .reader, let path = address.flatMap(EpubReader.path(of:)) { return (path as NSString).lastPathComponent }
+        if self == .office, let path = address.flatMap(OfficeViewer.path(of:)) { return (path as NSString).lastPathComponent }
         return title
     }
 }
@@ -82,9 +101,196 @@ enum DesktopPages {
         switch page {
         case .apps: return appsState()
         case .history: return historyState()
-        case .settings, .files, .editor, .browser: return settingsState()
+        case .calendar: return calendarState()
+        case .settings, .files, .editor, .reader, .office, .browser: return settingsState()
         }
     }
+
+    // MARK: Calendar page
+
+    /// A transient message from the last add (a date that did not work, …), shown until the next action.
+    private static var calError: String?
+
+    private static func calendarState() -> [String: Any] {
+        let cal = Calendar.current
+        let (year, month, items) = CalendarApp.month()
+        let first = cal.date(from: DateComponents(year: year, month: month)) ?? Date()
+        let daysInMonth = cal.range(of: .day, in: .month, for: first)?.count ?? 30
+        let offset = (cal.component(.weekday, from: first) - cal.firstWeekday + 7) % 7
+        let today = cal.dateComponents([.year, .month, .day], from: Date())
+        let sel = cal.dateComponents([.year, .month, .day], from: CalendarApp.selected)
+        var byDay: [Int: [CalendarApp.Item]] = [:]
+        for it in items { byDay[it.day, default: []].append(it) }
+        let iso = DateFormatter()
+        iso.dateFormat = "yyyy-MM-dd"
+        iso.timeZone = .current
+        var cells: [[String: Any]] = []
+        for i in 0..<42 {
+            let day = i - offset + 1
+            let inMonth = day >= 1 && day <= daysInMonth
+            var cell: [String: Any] = [
+                "day": inMonth ? day : 0,
+                "iso": inMonth ? String(format: "%04d-%02d-%02d", year, month, day) : "",
+                "today": inMonth && day == today.day && month == today.month && year == today.year,
+                "selected": inMonth && day == sel.day && month == sel.month && year == sel.year,
+            ]
+            if inMonth, let list = byDay[day], !list.isEmpty {
+                cell["events"] = list.prefix(3).map { ["title": $0.title, "color": $0.color] }
+                cell["more"] = max(0, list.count - 3)
+            }
+            cells.append(cell)
+        }
+        let df = DateFormatter()
+        var weekdays = df.veryShortWeekdaySymbols ?? []
+        let rot = cal.firstWeekday - 1
+        if weekdays.count == 7, rot > 0 { weekdays = Array(weekdays[rot...]) + Array(weekdays[..<rot]) }
+        let monthName = month >= 1 && month <= 12 ? (df.monthSymbols?[month - 1] ?? "") : ""
+        let selFmt = DateFormatter()
+        selFmt.dateStyle = .full
+        let timeFmt = DateFormatter()
+        timeFmt.timeStyle = .short
+        let dayEvents: [[String: Any]] = CalendarApp.day().map { e in
+            ["id": e.id, "title": e.title, "color": e.color, "allDay": e.allDay,
+             "time": e.allDay ? "" : timeFmt.string(from: e.start) + " – " + timeFmt.string(from: e.end)]
+        }
+        return [
+            "year": year, "monthName": monthName, "weekdays": weekdays, "cells": cells,
+            "note": CalendarApp.note, "error": calError ?? "",
+            "selectedLabel": selFmt.string(from: CalendarApp.selected),
+            "selectedDay": iso.string(from: CalendarApp.selected),
+            "events": dayEvents,
+            "today": String(localized: "Today"), "add": String(localized: "Add"),
+            "newEvent": String(localized: "New event"), "name": String(localized: "Name"),
+            "start": String(localized: "Start"), "end": String(localized: "End"),
+            "allDayHint": String(localized: "No times: all day"), "noEvents": String(localized: "No events this day."),
+            "allow": String(localized: "Allow calendars"), "delete": String(localized: "Delete"),
+        ]
+    }
+
+    private static func calendarHTML() -> String {
+        """
+        <!doctype html><html><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+        <title>Calendar</title>
+        <style>\(calendarCSS)</style>
+        <script>const S0 = \(json(calendarState())), BRIDGE = '\(messageName)';</script>
+        </head><body>
+        <div class="bar">
+          <button onclick="send('prev')">‹</button>
+          <button id="today" onclick="send('today')"></button>
+          <button onclick="send('next')">›</button>
+          <span class="grow"></span><span id="label" class="label"></span>
+        </div>
+        <div id="note" class="note" hidden></div>
+        <div class="cols">
+          <div class="gridwrap"><div id="wd" class="grid wd"></div><div id="grid" class="grid"></div></div>
+          <div class="side">
+            <div id="sellabel" class="sellabel"></div>
+            <div id="events"></div>
+            <div class="addbox">
+              <div id="newevent" class="addtitle"></div>
+              <input id="f-title" type="text">
+              <div class="row"><input id="f-date" type="date"></div>
+              <div class="row"><input id="f-start" type="time"><input id="f-end" type="time"></div>
+              <div id="allday" class="hint"></div>
+              <div id="error" class="error"></div>
+              <button id="b-add" class="primary" onclick="addEvent()"></button>
+            </div>
+          </div>
+        </div>
+        <script>\(calendarScript)</script>
+        </body></html>
+        """
+    }
+
+    private static let calendarCSS = #"""
+    :root { color-scheme: dark; }
+    html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+    html, body { margin: 0; height: 100%; background: #1b1b1e; color: #eee; font: 14px -apple-system, sans-serif; }
+    body { display: flex; flex-direction: column; }
+    .bar { display: flex; align-items: center; gap: 8px; padding: 8px 14px; background: #232327;
+           border-bottom: 1px solid #2f2f34; }
+    .bar button { background: #2c2c31; color: #eee; border: 1px solid #3a3a40; border-radius: 6px; padding: 4px 12px; font: inherit; }
+    .bar .label { font-weight: 600; font-size: 15px; }
+    .grow { flex: 1; }
+    .note { padding: 10px 14px; background: #33331f; color: #e8e0a0; }
+    .note button { margin-left: 10px; background: #2c2c31; color: #eee; border: 1px solid #3a3a40; border-radius: 6px; padding: 3px 10px; font: inherit; }
+    .note[hidden] { display: none; }
+    .cols { flex: 1; display: flex; min-height: 0; }
+    .gridwrap { flex: 1.4; padding: 12px; overflow-y: auto; }
+    .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+    .grid.wd { margin-bottom: 4px; }
+    .grid.wd div { text-align: center; color: #999; font-size: 12px; }
+    .cell { min-height: 64px; background: #232327; border: 1px solid #2f2f34; border-radius: 8px; padding: 4px 6px;
+            cursor: pointer; overflow: hidden; }
+    .cell.empty { background: none; border: none; cursor: default; }
+    .cell.today .d { color: #0a84ff; font-weight: 700; }
+    .cell.selected { border-color: #0a84ff; }
+    .cell .d { font-size: 12px; margin-bottom: 2px; }
+    .cell .ev { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+                border-left: 3px solid; padding-left: 4px; margin-bottom: 1px; }
+    .cell .more { font-size: 10px; color: #999; }
+    .side { flex: 1; border-left: 1px solid #2f2f34; padding: 12px 14px; overflow-y: auto; }
+    .sellabel { font-weight: 600; margin-bottom: 8px; }
+    .event { display: flex; align-items: center; gap: 8px; background: #232327; border: 1px solid #2f2f34;
+             border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; }
+    .event .dot { width: 8px; height: 8px; border-radius: 4px; flex: none; }
+    .event .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .event .time { color: #999; font-size: 12px; }
+    .event button { background: none; border: none; color: #999; font: inherit; cursor: pointer; }
+    .dim { color: #888; }
+    .addbox { margin-top: 14px; border-top: 1px solid #2f2f34; padding-top: 12px; }
+    .addtitle { font-weight: 600; margin-bottom: 8px; }
+    .addbox input { width: 100%; box-sizing: border-box; background: #2c2c31; color: #eee;
+                    border: 1px solid #3a3a40; border-radius: 6px; padding: 6px 8px; font: inherit; margin-bottom: 6px; }
+    .addbox .row { display: flex; gap: 6px; }
+    .hint { color: #888; font-size: 12px; margin-bottom: 6px; }
+    .error { color: #ff9f9a; font-size: 12px; min-height: 16px; margin-bottom: 4px; }
+    button.primary { background: #0a84ff; color: #fff; border: none; border-radius: 6px; padding: 7px 16px; font: inherit; }
+    """#
+
+    private static let calendarScript = #"""
+    function send(a, v) { window.webkit.messageHandlers[BRIDGE].postMessage({ action: a, value: v === undefined ? '' : String(v) }); }
+    function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+    function render(S) {
+      document.getElementById('label').textContent = S.monthName + ' ' + S.year;
+      document.getElementById('today').textContent = S.today;
+      document.getElementById('newevent').textContent = S.newEvent;
+      document.getElementById('b-add').textContent = S.add;
+      document.getElementById('f-title').placeholder = S.name;
+      document.getElementById('allday').textContent = S.allDayHint;
+      document.getElementById('error').textContent = S.error || '';
+      const note = document.getElementById('note');
+      if (S.note) { note.hidden = false; note.innerHTML = esc(S.note) + (S.allow ? `<button onclick="send('access')">${esc(S.allow)}</button>` : ''); }
+      else { note.hidden = true; }
+      document.getElementById('wd').innerHTML = (S.weekdays || []).map(w => `<div>${esc(w)}</div>`).join('');
+      document.getElementById('grid').innerHTML = (S.cells || []).map(c => {
+        if (!c.day) return '<div class="cell empty"></div>';
+        const evs = (c.events || []).map(e => `<div class="ev" style="border-color:${e.color}">${esc(e.title)}</div>`).join('');
+        const more = c.more ? `<div class="more">+${c.more}</div>` : '';
+        return `<div class="cell${c.today ? ' today' : ''}${c.selected ? ' selected' : ''}" onclick="send('day','${c.iso}')">`
+          + `<div class="d">${c.day}</div>${evs}${more}</div>`;
+      }).join('');
+      document.getElementById('sellabel').textContent = S.selectedLabel;
+      const ev = S.events || [];
+      document.getElementById('events').innerHTML = ev.length ? ev.map(e =>
+        `<div class="event"><span class="dot" style="background:${e.color}"></span>`
+        + `<span class="t">${esc(e.title)}</span><span class="time">${esc(e.allDay ? '' : e.time)}</span>`
+        + `<button onclick="send('delete','${e.id}')" title="${esc(S.delete)}">✕</button></div>`).join('')
+        : `<p class="dim">${esc(S.noEvents)}</p>`;
+      const fd = document.getElementById('f-date');
+      if (!fd.value) fd.value = S.selectedDay;
+    }
+    function addEvent() {
+      const o = { title: document.getElementById('f-title').value,
+                  day: document.getElementById('f-date').value,
+                  start: document.getElementById('f-start').value,
+                  end: document.getElementById('f-end').value };
+      document.getElementById('f-title').value = '';
+      send('add', JSON.stringify(o));
+    }
+    render(S0);
+    """#
 
     private static func historyState() -> [String: Any] {
         let b = Browsing.shared
@@ -225,7 +431,7 @@ enum DesktopPages {
     static func refresh() {
         for w in DesktopModel.shared.windows {
             for tab in w.tabs {
-                guard let page = DesktopPage(tab.url), page != .files, page != .editor, !tab.isLoading else { continue }
+                guard let page = DesktopPage(tab.url), page != .files, page != .editor, page != .reader, page != .office, !tab.isLoading else { continue }
                 tab.evaluateJavaScript("window.render && render(\(json(state(page))))")
             }
         }
@@ -349,7 +555,34 @@ enum DesktopPages {
             if let app = GuestStore.shared.apps.first(where: { $0.id == value }), let url = Compatibility.reportURL(for: app) {
                 m.openWindow(url)
             }
-        case (.apps, "clearCaches"):
+        case (.calendar, "prev"):
+            calError = nil
+            CalendarApp.show(month: -1)
+        case (.calendar, "next"):
+            calError = nil
+            CalendarApp.show(month: 1)
+        case (.calendar, "today"):
+            calError = nil
+            CalendarApp.showToday()
+        case (.calendar, "day"):
+            calError = nil
+            let df = DateFormatter()
+            df.dateFormat = "yyyy-MM-dd"
+            df.timeZone = .current
+            if let d = df.date(from: value) { CalendarApp.select(day: d) }
+        case (.calendar, "add"):
+            calError = nil
+            if let data = value.data(using: .utf8),
+               let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: String] {
+                calError = CalendarApp.add(title: o["title"] ?? "", day: o["day"] ?? "",
+                                           start: o["start"] ?? "", end: o["end"] ?? "")
+            }
+        case (.calendar, "delete"):
+            calError = nil
+            CalendarApp.delete(id: value)
+        case (.calendar, "access"):
+            CalendarApp.requestAccess { DesktopPages.refresh() }
+        case (.apps, "clearCaches"): 
             GuestStore.shared.clearCachesOnLaunch.toggle()
             if GuestStore.shared.clearCachesOnLaunch {
                 m.showToast(String(localized: "The apps' caches are cleared the next time iDesk opens."))
