@@ -227,6 +227,7 @@ final class DesktopModel: ObservableObject {
         Shortcut(name: String(localized: "Browser"), symbol: "globe", url: "https://www.google.com", hue: 0.60),
         Shortcut(name: String(localized: "Files"), symbol: "folder.fill", url: DesktopPage.files.url.absoluteString, hue: 0.57),
         Shortcut(name: String(localized: "Settings"), symbol: "gearshape.fill", url: DesktopPage.settings.url.absoluteString, hue: 0.0),
+        Shortcut(name: String(localized: "Calendar"), symbol: "calendar", url: DesktopPage.calendar.url.absoluteString, hue: 0.05),
         Shortcut(name: String(localized: "Trash"), symbol: "trash.fill", url: trashURL, hue: 0.0),
     ]
     /// The Trash's desktop icon opens Files at the Trash (FilesExtras.swift).
