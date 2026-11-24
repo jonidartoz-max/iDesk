@@ -201,7 +201,7 @@ final class PreviewController: UIViewController {
         alert.addAction(UIAlertAction(title: "OK", style: .cancel) { [weak self] _ in
             self?.model.notice = nil
         })
-        var top = self
+        var top: UIViewController = self
         while let p = top.presentedViewController, !p.isBeingDismissed { top = p }
         top.present(alert, animated: true)
     }

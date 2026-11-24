@@ -78,7 +78,7 @@ enum DesktopPage: String {
             let address = address ?? url
             webView.loadHTMLString(OfficeViewer.html(for: address), baseURL: address)
         case .calendar:
-            webView.loadHTMLString(calendarHTML(), baseURL: url)
+            webView.loadHTMLString(DesktopPages.calendarHTML(), baseURL: url)
         }
     }
 
@@ -167,7 +167,7 @@ enum DesktopPages {
         ]
     }
 
-    private static func calendarHTML() -> String {
+    static func calendarHTML() -> String {
         """
         <!doctype html><html><head><meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
