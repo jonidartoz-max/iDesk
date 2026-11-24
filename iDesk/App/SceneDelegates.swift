@@ -17,25 +17,38 @@ final class PhoneSceneDelegate: UIResponder, UIWindowSceneDelegate {
         window.claimKeyboard()
         self.window = window
 
-        // DeX-style: when a display connects, the iPhone becomes the trackpad + keyboard by itself
-        // (Settings → External display can turn this off); unplugging returns it to the desktop.
-        displayObserver = DesktopModel.shared.$isExternalConnected
-            .receive(on: DispatchQueue.main)
-            .sink { [weak window] connected in
-                guard let window else { return }
-                let auto = UserDefaults.standard.object(forKey: PhoneSceneDelegate.autoTrackpadKey) as? Bool ?? true
-                if connected, auto {
-                    PhoneHostingController.setLandscape(true)
-                    window.rootViewController = PhoneHostingController(rootView: ControllerView(model: DesktopModel.shared))
-                } else {
-                    PhoneHostingController.setLandscape(false)
-                    window.rootViewController = PreviewController()
-                }
-            }
+        // DeX-style: when a real display connects, the iPhone becomes the trackpad + keyboard by
+        // itself (Settings → External display can turn this off); unplugging returns it to the
+        // desktop. (The signal is the external scene connecting — NOT model.isExternalConnected,
+        // which the phone's own desktop also sets.)
+        displayObserver = NotificationCenter.default.addObserver(
+            forName: .iDeskExternalDisplay, object: nil, queue: .main
+        ) { [weak window] note in
+            guard let window, let connected = note.object as? Bool else { return }
+            PhoneSceneDelegate.applyDisplayMode(connected: connected, window: window)
+        }
+        // Launched while a display is already connected: no notification fires for it, so check once.
+        DispatchQueue.main.async { [weak window] in
+            guard let window, ExternalDisplay.isConnected else { return }
+            PhoneSceneDelegate.applyDisplayMode(connected: true, window: window)
+        }
     }
 
     static let autoTrackpadKey = "autoTrackpadOnDisplay"
-    private var displayObserver: AnyCancellable?
+    private var displayObserver: NSObjectProtocol?
+
+    static func applyDisplayMode(connected: Bool, window: UIWindow) {
+        let auto = UserDefaults.standard.object(forKey: autoTrackpadKey) as? Bool ?? true
+        if connected, auto {
+            guard !(window.rootViewController is PhoneHostingController) else { return }
+            PhoneHostingController.setLandscape(true)
+            window.rootViewController = PhoneHostingController(rootView: ControllerView(model: DesktopModel.shared))
+        } else if !connected {
+            guard window.rootViewController is PhoneHostingController else { return }
+            PhoneHostingController.setLandscape(false)
+            window.rootViewController = PreviewController()
+        }
+    }
 
     func sceneDidBecomeActive(_ scene: UIScene) {
         PhoneWindow.current?.claimKeyboard()
@@ -117,6 +130,7 @@ final class ExternalSceneDelegate: UIResponder, UIWindowSceneDelegate {
                options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
         ExternalDisplay.connected(windowScene.screen)
+        NotificationCenter.default.post(name: .iDeskExternalDisplay, object: true)
         let model = DesktopModel.shared
         model.screenSize = windowScene.coordinateSpace.bounds.size
 
@@ -154,6 +168,12 @@ final class ExternalSceneDelegate: UIResponder, UIWindowSceneDelegate {
         modeObserver = nil
         DesktopModel.shared.externalDisconnected()
         ExternalDisplay.disconnected()
+        NotificationCenter.default.post(name: .iDeskExternalDisplay, object: false)
         window = nil
     }
+}
+
+extension Notification.Name {
+    /// A real external display (cable or AirPlay) connected or disconnected; object is true/false.
+    static let iDeskExternalDisplay = Notification.Name("iDeskExternalDisplay")
 }
