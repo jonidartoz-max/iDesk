@@ -1288,26 +1288,27 @@ final class DesktopModel: ObservableObject {
         scheduleSave()
     }
 
-    /// Two-finger pinch on the desktop: close the fingers to minimize the window under them (or the
-    /// focused window), open them to bring back the window that was minimized most recently.
-    /// Fires once per gesture, past a deliberate threshold so an accidental twitch never triggers it.
-    private var pinchConsumed = false
+    /// v5 feel: a one-finger pan scrolls when the press did not grab anything draggable (a title bar,
+    /// an icon, a widget, a sticky note, a resize edge, a guest app's own touch) and no area capture
+    /// is running.
+    var touchScrollsFreely: Bool {
+        if case .none = drag { return capture == nil }
+        return false
+    }
+
+    /// Pinch on a window (his actual ask): spreading the fingers widens it to fill the desktop,
+    /// closing them brings it back to its size before. Fires once per gesture past a deliberate
+    /// threshold; nothing waits on the pinch, so scrolling stays instant.
+    private var widenConsumed = false
+    /// Most-recently-minimized first, so taskbar restore picks the window he used last.
     private var minimizeStack: [UUID] = []
 
-    func pinch(scale: CGFloat, at p: CGPoint, state: UIGestureRecognizer.State) {
-        if state == .began { pinchConsumed = false }
-        guard state == .changed, !pinchConsumed else { return }
-        if scale <= 0.72 {
-            guard let w = topWindow(at: p) ?? focused, !w.isFullscreen else { return }
-            pinchConsumed = true
-            minimize(w)
-        } else if scale >= 1.4 {
-            pinchConsumed = true
-            while let id = minimizeStack.popLast() {
-                if let w = window(id), w.isMinimized { focus(w); return }
-            }
-            if let w = windows.last(where: { $0.isMinimized && $0.workspace == workspace }) { focus(w) }
-        }
+    func pinchWiden(scale: CGFloat, at p: CGPoint, state: UIGestureRecognizer.State) {
+        if state == .began { widenConsumed = false }
+        guard state == .changed, !widenConsumed else { return }
+        guard let w = topWindow(at: p) ?? focused, !w.isFullscreen else { return }
+        if scale >= 1.35, !w.isMaximized { widenConsumed = true; toggleMaximize(w) }
+        else if scale <= 0.75, w.isMaximized { widenConsumed = true; toggleMaximize(w) }
     }
 
     /// The window covers the whole external display (taskbar included) when the page requests fullscreen.

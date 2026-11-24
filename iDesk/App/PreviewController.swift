@@ -4,17 +4,19 @@ import Combine
 
 /// The desktop on the iPhone itself: fullscreen, in portrait or landscape, controlled by touching it directly.
 /// This is how iDesk opens; the trackpad/keyboard screen and laptop mode are reachable from Settings on the desktop.
-/// Tap = click, one finger = move the pointer and drag, two fingers = scroll (with momentum), hold = right click,
-/// pinch closed = minimize the window under the fingers, pinch open = bring the last minimized window back.
+/// Tap = click (tolerant of a shaky finger), one finger = drag what is grabbable and scroll everywhere
+/// else (with momentum), two fingers = scroll, hold = right click, pinch out on a window = widen it to
+/// fill the desktop, pinch in = back to its size before.
 /// The `-iDeskPreview` launch argument still works; add `-iDeskInstall <path.ipa> [more.ipa…]` to install and open
 /// apps, or `-iDeskOpen <url>` to open a web page.
 final class PreviewController: UIViewController {
     static var isRequested: Bool { ProcessInfo.processInfo.arguments.contains("-iDeskPreview") }
 
     private let model = DesktopModel.shared
-    /// The desktop's logical size: about 604 points on the short side, so window controls and text stay
+    /// The desktop's logical size: 560 points on the short side, so window controls and text stay
     /// touch-sized on the phone (the original 786-point base made everything a third too small).
-    private var desktopSize = CGSize(width: 604, height: 1208)
+    /// 560 matches the device-proven v5 build: ~20% bigger targets, exactly what he asked for.
+    private var desktopSize = CGSize(width: 560, height: 1208)
     private lazy var host = UIHostingController(rootView: DesktopView(model: model))
     private var lastPan: CGPoint = .zero
     private var lastScroll: CGPoint = .zero
@@ -46,18 +48,21 @@ final class PreviewController: UIViewController {
         let shield = UIView(frame: view.bounds)
         shield.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(shield)
-        shield.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
+        // A tap survives a shaky finger (24 pt, the device-proven v5 tolerance) instead of dying on any wiggle.
+        let tap = UITapGestureRecognizer(target: self, action: #selector(tapped))
+        if tap.responds(to: Selector(("setAllowableMovement:"))) {
+            tap.setValue(24.0, forKey: "allowableMovement")
+        }
+        shield.addGestureRecognizer(tap)
         let pan = UIPanGestureRecognizer(target: self, action: #selector(panned))
         pan.maximumNumberOfTouches = 1
         shield.addGestureRecognizer(pan)
         let scroll = UIPanGestureRecognizer(target: self, action: #selector(scrolled))
         scroll.minimumNumberOfTouches = 2
         shield.addGestureRecognizer(scroll)
-        // Pinch: close two fingers to minimize the window under them, open to bring it back. Two-finger
-        // scrolling waits a beat to make sure it is not a pinch first.
-        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(pinched))
-        shield.addGestureRecognizer(pinch)
-        scroll.require(toFail: pinch)
+        // Pinch on a window: spreading widens it to fill the desktop, closing brings its size back.
+        // Nothing waits on the pinch, so one- and two-finger scrolling stays instant.
+        shield.addGestureRecognizer(UIPinchGestureRecognizer(target: self, action: #selector(pinched)))
         // Touch and hold = right click (context menus). Short and tolerant: a finger is never perfectly still.
         let hold = UILongPressGestureRecognizer(target: self, action: #selector(held))
         hold.minimumPressDuration = 0.3
@@ -148,6 +153,9 @@ final class PreviewController: UIViewController {
         model.rightClick()
     }
 
+    /// One finger: drags what is actually grabbable (title bar, icon, widget, sticky, resize edge,
+    /// guest touch); anywhere else it scrolls the content under the finger, following the finger and
+    /// gliding on after the lift — the device-proven v5/v6 feel, now with momentum.
     @objc private func panned(_ g: UIPanGestureRecognizer) {
         let p = desktopPoint(g)
         switch g.state {
@@ -156,16 +164,29 @@ final class PreviewController: UIViewController {
             model.cursor.position = CGPoint(x: p.x - t.x, y: p.y - t.y)
             model.mouseDown()
             model.moveCursor(dx: t.x, dy: t.y)
+            panScrolled = false
         case .changed:
-            model.moveCursor(dx: p.x - lastPan.x, dy: p.y - lastPan.y)
+            if model.touchScrollsFreely {
+                if !panScrolled { panScrolled = true; momentum.cancel() }
+                model.scroll(dx: -(p.x - lastPan.x), dy: -(p.y - lastPan.y))
+            } else {
+                model.moveCursor(dx: p.x - lastPan.x, dy: p.y - lastPan.y)
+            }
         default:
+            if panScrolled {
+                let v = g.velocity(in: host.view)
+                momentum.start(vx: -v.x, vy: -v.y)
+                panScrolled = false
+            }
             model.mouseUp()
         }
         lastPan = p
     }
 
+    private var panScrolled = false
+
     @objc private func pinched(_ g: UIPinchGestureRecognizer) {
-        model.pinch(scale: g.scale, at: desktopPoint(g), state: g.state)
+        model.pinchWiden(scale: g.scale, at: desktopPoint(g), state: g.state)
     }
 
     @objc private func scrolled(_ g: UIPanGestureRecognizer) {
