@@ -38,10 +38,10 @@ final class ScrollMomentum: NSObject {
         let dt = min(0.05, now - last)
         last = now
         // The same deceleration as a scroll view: about 0.94 per frame at 60 fps.
-        let decay = exp(-3.4 * dt)
+        let decay = CGFloat(exp(-3.4 * dt))
         vx *= decay
         vy *= decay
         guard hypot(vx, vy) > 12 else { cancel(); return }
-        apply(vx * dt, vy * dt)
+        apply(vx * CGFloat(dt), vy * CGFloat(dt))
     }
 }
