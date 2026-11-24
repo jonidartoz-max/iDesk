@@ -45,6 +45,7 @@ struct SettingsSheet: View {
     @AppStorage(InputSettings.scrollKey) private var scrollSpeed = InputSettings.defaultScroll
     @AppStorage(InputSettings.naturalScrollingKey) private var naturalScrolling = true
     @AppStorage(InputSettings.alwaysShowMouseModeKey) private var alwaysShowMouseMode = false
+    @AppStorage(PhoneSceneDelegate.autoTrackpadKey) private var autoTrackpad = true
     @State private var showMouseCheck = false
     @ObservedObject private var updates = UpdateChecker.shared
     @State private var showCheck = false
@@ -72,6 +73,16 @@ struct SettingsSheet: View {
                     }
                 } header: {
                     Text("Trackpad speed")
+                }
+
+                Section {
+                    Toggle(isOn: $autoTrackpad) {
+                        Label("iPhone becomes the trackpad when a display is connected", systemImage: "rectangle.connected.to.line.below")
+                    }
+                } header: {
+                    Text("External display")
+                } footer: {
+                    Text("Plug a display in and the desktop moves to it while the iPhone turns into the trackpad and keyboard. Unplug and the desktop returns to the iPhone.")
                 }
 
                 Section {

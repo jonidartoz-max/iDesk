@@ -1,5 +1,6 @@
 import UIKit
 import SwiftUI
+import Combine
 
 /// iPhone screen: the desktop itself, fullscreen (PreviewController). The trackpad + keyboard screen
 /// (ControllerView) is still there for an external display: Settings on the desktop → iPhone.
@@ -15,7 +16,26 @@ final class PhoneSceneDelegate: UIResponder, UIWindowSceneDelegate {
         PhoneWindow.current = window
         window.claimKeyboard()
         self.window = window
+
+        // DeX-style: when a display connects, the iPhone becomes the trackpad + keyboard by itself
+        // (Settings → External display can turn this off); unplugging returns it to the desktop.
+        displayObserver = DesktopModel.shared.$isExternalConnected
+            .receive(on: DispatchQueue.main)
+            .sink { [weak window] connected in
+                guard let window else { return }
+                let auto = UserDefaults.standard.object(forKey: PhoneSceneDelegate.autoTrackpadKey) as? Bool ?? true
+                if connected, auto {
+                    PhoneHostingController.setLandscape(true)
+                    window.rootViewController = PhoneHostingController(rootView: ControllerView(model: DesktopModel.shared))
+                } else {
+                    PhoneHostingController.setLandscape(false)
+                    window.rootViewController = PreviewController()
+                }
+            }
     }
+
+    static let autoTrackpadKey = "autoTrackpadOnDisplay"
+    private var displayObserver: AnyCancellable?
 
     func sceneDidBecomeActive(_ scene: UIScene) {
         PhoneWindow.current?.claimKeyboard()
