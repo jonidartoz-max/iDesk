@@ -51,7 +51,7 @@ enum CalendarApp {
         let cal = Calendar.current
         let comps = cal.dateComponents([.year, .month], from: cursor)
         guard let first = cal.date(from: comps),
-              let range = cal.range(of: .day, in: .month, for: first),
+              cal.range(of: .day, in: .month, for: first) != nil,
               let next = cal.date(byAdding: .month, value: 1, to: first) else { return (0, 0, []) }
         var items: [Item] = []
         if EKEventStore.authorizationStatus(for: .event) == .fullAccess || EKEventStore.authorizationStatus(for: .event) == .authorized {
