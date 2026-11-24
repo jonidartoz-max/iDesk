@@ -635,6 +635,7 @@ final class DesktopModel: ObservableObject {
             if let w = windows.last(where: { $0.systemPage == .files }) { w.showFolder(path) }
             return
         }
+        if EpubReader.isBook(url) { openWindow(EpubReader.url(for: path)); return }
         if TextEditor.canEdit(url) { openWindow(TextEditor.url(for: path)); return }
         openWindow(url)
     }
@@ -1017,9 +1018,10 @@ final class DesktopModel: ObservableObject {
         let page = DesktopPage(url)
         // iDesk's own pages (Files, Settings, Apps): one window each, brought to the front if already open;
         // they are light, so the window limit does not apply to them.
-        // (The editor: one window per file.)
-        if let page, let w = windows.first(where: { w in w.tab(showing: page) != nil && (page != .editor || w.tabs.contains { $0.url == url }) }),
-           let i = page == .editor ? w.tabs.firstIndex(where: { $0.url == url }) : w.tab(showing: page) {
+        // (The editor and the reader: one window per file.)
+        if let page, let w = windows.first(where: { w in w.tab(showing: page) != nil &&
+            (page != .editor && page != .reader || w.tabs.contains { $0.url == url }) }),
+           let i = (page == .editor || page == .reader) ? w.tabs.firstIndex(where: { $0.url == url }) : w.tab(showing: page) {
             w.selectTab(i)
             focus(w)
             return
