@@ -98,6 +98,10 @@ final class PreviewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        layoutDesktop()
+    }
+
+    private func layoutDesktop() {
         let safe = view.safeAreaLayoutGuide.layoutFrame
         guard safe.width > 0, safe.height > 0 else { return }
         // Follow the phone's shape (portrait or landscape), the long side at most 2.5× the short one.
@@ -111,10 +115,12 @@ final class PreviewController: UIViewController {
             host.view.bounds = CGRect(origin: .zero, size: size)
             model.screenSize = size
         }
-        let s = min(safe.width / size.width, safe.height / size.height)
+        // The keyboard takes the bottom: the desktop scales into what is left above it, like a native app.
+        let free = CGRect(x: safe.minX, y: safe.minY, width: safe.width, height: max(80, safe.height - keyboardHeight))
+        let s = min(free.width / size.width, free.height / size.height)
         host.view.transform = CGAffineTransform(scaleX: s, y: s)
-        host.view.layer.position = safe.origin
-        keyboardButton.frame = CGRect(x: safe.maxX - 58, y: safe.maxY - 100, width: 44, height: 44)
+        host.view.layer.position = free.origin
+        keyboardButton.frame = CGRect(x: free.maxX - 58, y: free.maxY - 100, width: 44, height: 44)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -209,13 +215,25 @@ final class PreviewController: UIViewController {
 
     // MARK: Keyboard
 
+    private var keyboardHeight: CGFloat = 0
+
     @objc private func toggleKeyboard() {
         if keys.isFirstResponder { keys.resignFirstResponder() } else { keys.becomeFirstResponder() }
     }
 
+    /// Native-iOS keyboard feel: the desktop resizes to sit above the keyboard, animated with the
+    /// keyboard's own duration and curve, and the keyboard button rides on top of it.
     @objc private func keyboardChanged(_ note: Notification) {
         let shown = note.name == UIResponder.keyboardWillShowNotification
         keyboardButton.tintColor = shown ? UIColor.systemGreen : .white
+        let end = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue ?? .zero
+        keyboardHeight = shown ? max(0, view.convert(end, from: nil).intersection(view.bounds).height) : 0
+        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int) ?? 7
+        let options = UIView.AnimationOptions(rawValue: UInt(curveRaw << 16))
+        UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState]) {
+            self.layoutDesktop()
+        }
     }
 
     // MARK: Notices
