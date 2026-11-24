@@ -162,6 +162,8 @@ final class LaptopModeController: UIViewController {
 
     /// Two fingers: the pointer itself — press, drag and drop on the desktop.
     @objc private func dragged(_ g: UIPanGestureRecognizer) {
+        // A pinch resize in progress owns the two fingers.
+        guard !model.isWidenActive else { return }
         let p = point(g)
         switch g.state {
         case .began:

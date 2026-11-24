@@ -190,6 +190,8 @@ final class PreviewController: UIViewController {
     }
 
     @objc private func scrolled(_ g: UIPanGestureRecognizer) {
+        // A pinch resize in progress owns the two fingers.
+        guard !model.isWidenActive else { return }
         let p = desktopPoint(g)
         switch g.state {
         case .began:

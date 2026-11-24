@@ -1296,19 +1296,57 @@ final class DesktopModel: ObservableObject {
         return false
     }
 
-    /// Pinch on a window (his actual ask): spreading the fingers widens it to fill the desktop,
-    /// closing them brings it back to its size before. Fires once per gesture past a deliberate
-    /// threshold; nothing waits on the pinch, so scrolling stays instant.
-    private var widenConsumed = false
+    /// Continuous pinch resize (his ask): the window under the fingers follows the pinch freely,
+    /// growing or shrinking with the gesture — not just maximize/restore. A small deadzone keeps a
+    /// two-finger scroll from nudging the size; once the resize bites, scrolling yields to it.
+    private var widenID: UUID?
+    private var widenBegin: CGRect = .zero
+    private var widenArmed = false
+
+    /// True while a pinch resize is driving, so two-finger scroll/drag yields mid-gesture.
+    private(set) var isWidenActive = false
+
     /// Most-recently-minimized first, so taskbar restore picks the window he used last.
     private var minimizeStack: [UUID] = []
 
     func pinchWiden(scale: CGFloat, at p: CGPoint, state: UIGestureRecognizer.State) {
-        if state == .began { widenConsumed = false }
-        guard state == .changed, !widenConsumed else { return }
-        guard let w = topWindow(at: p) ?? focused, !w.isFullscreen else { return }
-        if scale >= 1.35, !w.isMaximized { widenConsumed = true; toggleMaximize(w) }
-        else if scale <= 0.75, w.isMaximized { widenConsumed = true; toggleMaximize(w) }
+        switch state {
+        case .began:
+            widenArmed = false
+            isWidenActive = false
+            if let w = topWindow(at: p) ?? focused, !w.isFullscreen {
+                widenID = w.id
+                widenBegin = w.frame
+            } else {
+                widenID = nil
+            }
+        case .changed:
+            guard let id = widenID, let w = window(id) else { return }
+            if !widenArmed {
+                guard abs(scale - 1) > 0.07 else { return }
+                widenArmed = true
+                isWidenActive = true
+                if w.isMaximized || w.isSnapped {
+                    w.isMaximized = false
+                    w.isSnapped = false
+                    w.snap = nil
+                    w.frame = widenBegin
+                }
+            }
+            let s = min(max(scale, 0.25), 4)
+            let area = desktopArea
+            var f = CGRect.zero
+            f.size.width = min(max(widenBegin.width * s, Layout.minWindowSize.width), area.width)
+            f.size.height = min(max(widenBegin.height * s, Layout.minWindowSize.height), area.height)
+            f.origin.x = min(max(widenBegin.midX - f.width / 2, area.minX), area.maxX - f.width)
+            f.origin.y = min(max(widenBegin.midY - f.height / 2, area.minY), area.maxY - f.height)
+            w.frame = f
+        default:
+            if widenID != nil, widenArmed { scheduleSave() }
+            widenID = nil
+            widenArmed = false
+            isWidenActive = false
+        }
     }
 
     /// The window covers the whole external display (taskbar included) when the page requests fullscreen.
