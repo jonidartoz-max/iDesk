@@ -5,7 +5,7 @@ import WebKit
 /// iDesk's own pages, shown in ordinary desktop windows so they work with the pointer and keyboard like any page:
 /// Files (idesk://files), Settings (idesk://settings), Apps (idesk://apps), Bookmarks and history (idesk://history).
 enum DesktopPage: String {
-    case files, settings, apps, history, editor, reader
+    case files, settings, apps, history, editor, reader, office
     /// The browser's own settings (ads, dark pages, bookmarks bar): from ⋯ in a browser window.
     case browser
 
@@ -20,6 +20,7 @@ enum DesktopPage: String {
         case .history: return String(localized: "Bookmarks and history")
         case .editor: return String(localized: "Text editor")
         case .reader: return String(localized: "Reader")
+        case .office: return String(localized: "Document viewer")
         case .browser: return String(localized: "Browser settings")
         }
     }
@@ -32,6 +33,7 @@ enum DesktopPage: String {
         case .history: return "book.fill"
         case .editor: return "doc.text.fill"
         case .reader: return "book.closed.fill"
+        case .office: return "doc.richtext.fill"
         case .browser: return "globe"
         }
     }
@@ -52,6 +54,7 @@ enum DesktopPage: String {
         case .history: return CGSize(width: 780, height: 720)
         case .editor: return CGSize(width: 820, height: 680)
         case .reader: return CGSize(width: 780, height: 720)
+        case .office: return CGSize(width: 820, height: 720)
         case .browser: return CGSize(width: 620, height: 700)
         }
     }
@@ -68,6 +71,9 @@ enum DesktopPage: String {
         case .reader:
             let address = address ?? url
             webView.loadHTMLString(EpubReader.html(for: address), baseURL: EpubReader.baseURL(for: address))
+        case .office:
+            let address = address ?? url
+            webView.loadHTMLString(OfficeViewer.html(for: address), baseURL: address)
         }
     }
 
@@ -75,6 +81,7 @@ enum DesktopPage: String {
     func windowTitle(for address: URL?) -> String {
         if self == .editor, let path = address.flatMap(TextEditor.path(of:)) { return (path as NSString).lastPathComponent }
         if self == .reader, let path = address.flatMap(EpubReader.path(of:)) { return (path as NSString).lastPathComponent }
+        if self == .office, let path = address.flatMap(OfficeViewer.path(of:)) { return (path as NSString).lastPathComponent }
         return title
     }
 }
@@ -89,7 +96,7 @@ enum DesktopPages {
         switch page {
         case .apps: return appsState()
         case .history: return historyState()
-        case .settings, .files, .editor, .reader, .browser: return settingsState()
+        case .settings, .files, .editor, .reader, .office, .browser: return settingsState()
         }
     }
 
@@ -232,7 +239,7 @@ enum DesktopPages {
     static func refresh() {
         for w in DesktopModel.shared.windows {
             for tab in w.tabs {
-                guard let page = DesktopPage(tab.url), page != .files, page != .editor, page != .reader, !tab.isLoading else { continue }
+                guard let page = DesktopPage(tab.url), page != .files, page != .editor, page != .reader, page != .office, !tab.isLoading else { continue }
                 tab.evaluateJavaScript("window.render && render(\(json(state(page))))")
             }
         }

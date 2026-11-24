@@ -636,6 +636,7 @@ final class DesktopModel: ObservableObject {
             return
         }
         if EpubReader.isBook(url) { openWindow(EpubReader.url(for: path)); return }
+        if OfficeViewer.canShow(url) { openWindow(OfficeViewer.url(for: path)); return }
         if TextEditor.canEdit(url) { openWindow(TextEditor.url(for: path)); return }
         openWindow(url)
     }
@@ -1020,8 +1021,8 @@ final class DesktopModel: ObservableObject {
         // they are light, so the window limit does not apply to them.
         // (The editor and the reader: one window per file.)
         if let page, let w = windows.first(where: { w in w.tab(showing: page) != nil &&
-            (page != .editor && page != .reader || w.tabs.contains { $0.url == url }) }),
-           let i = (page == .editor || page == .reader) ? w.tabs.firstIndex(where: { $0.url == url }) : w.tab(showing: page) {
+            (page != .editor && page != .reader && page != .office || w.tabs.contains { $0.url == url }) }),
+           let i = (page == .editor || page == .reader || page == .office) ? w.tabs.firstIndex(where: { $0.url == url }) : w.tab(showing: page) {
             w.selectTab(i)
             focus(w)
             return

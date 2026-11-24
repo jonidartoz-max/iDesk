@@ -178,10 +178,10 @@ final class DeskWindow: NSObject, ObservableObject, Identifiable, WKUIDelegate, 
         return Self.savedURL(url)
     }
 
-    /// The address to keep for a tab: iDesk's pages by their name (Files is a local file), except the text editor
-    /// and the reader, whose addresses name the file they show.
+    /// The address to keep for a tab: iDesk's pages by their name (Files is a local file), except the text editor,
+    /// the reader and the office viewer, whose addresses name the file they show.
     private static func savedURL(_ url: URL) -> URL {
-        guard let page = DesktopPage(url), page != .editor, page != .reader else { return url }
+        guard let page = DesktopPage(url), page != .editor, page != .reader, page != .office else { return url }
         return page.url
     }
 
