@@ -218,6 +218,26 @@ final class TerminalSession: ObservableObject {
         if y != v.contentOffset.y { v.setContentOffset(CGPoint(x: v.contentOffset.x, y: y), animated: false) }
     }
 
+    /// The terminal's text — everything (scrollback + screen) or just the visible screen — with
+    /// trailing blank lines trimmed. Copy-out for the right-click / long-press menu: the shield
+    /// keeps touches, so there is no drag selection, but the text itself is always reachable.
+    func dumpText(screenOnly: Bool) -> String {
+        let t = displayView.getTerminal()
+        var out: [String] = []
+        if screenOnly {
+            for row in 0..<t.rows { out.append(t.getLine(row: row)?.translateToString(trimRight: true) ?? "") }
+        } else {
+            // Scrollback + screen: scroll-invariant rows return nil past the buffer's end.
+            var row = 0
+            while let line = t.getScrollInvariantLine(row: row) {
+                out.append(line.translateToString(trimRight: true))
+                row += 1
+            }
+        }
+        while out.last?.isEmpty == true { out.removeLast() }
+        return out.joined(separator: "\n")
+    }
+
     private func write(_ s: String) {
         if mode == .local {
             idesk_shell_input(s, Int32(s.utf8.count))

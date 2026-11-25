@@ -2390,6 +2390,24 @@ final class DesktopModel: ObservableObject {
                 presentMenu(windowMenuItems(w), at: p)
                 return
             }
+            if let term = w.terminal {
+                // Terminal content: copy the shell's text out (the shield keeps touches, so no
+                // drag selection), or paste the clipboard in.
+                presentMenu([
+                    MenuItem("Copy all", "doc.on.doc") { [weak self] in
+                        let text = term.dumpText(screenOnly: false)
+                        if text.isEmpty { self?.showToast(String(localized: "Nothing to copy yet.")) }
+                        else { ClipboardHistory.shared.copy(text); self?.showToast(String(localized: "Copied the terminal's text.")) }
+                    },
+                    MenuItem("Copy this screen", "rectangle.inset.filled") { [weak self] in
+                        let text = term.dumpText(screenOnly: true)
+                        if text.isEmpty { self?.showToast(String(localized: "Nothing to copy yet.")) }
+                        else { ClipboardHistory.shared.copy(text); self?.showToast(String(localized: "Copied the terminal's screen.")) }
+                    },
+                    MenuItem("Paste", "doc.on.clipboard") { [weak self] in self?.paste() },
+                ], at: p)
+                return
+            }
             if let guest = w.guestWindow {
                 // Right click in a guest app = long press (iOS context menu).
                 tapGuest(guest, at: localPoint(p, in: w), hold: 0.7)
