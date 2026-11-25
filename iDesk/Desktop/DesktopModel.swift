@@ -17,15 +17,16 @@ enum Layout {
     static let minWindowSize = CGSize(width: 360, height: 260)
 
     // Title bar buttons (close / minimize / maximize), relative to the window frame.
-    static func closeButton(in f: CGRect) -> CGRect { CGRect(x: f.minX + 12, y: f.minY + 9, width: 16, height: 16) }
-    static func minimizeButton(in f: CGRect) -> CGRect { CGRect(x: f.minX + 34, y: f.minY + 9, width: 16, height: 16) }
-    static func maximizeButton(in f: CGRect) -> CGRect { CGRect(x: f.minX + 56, y: f.minY + 9, width: 16, height: 16) }
-    static func titleButtons(in f: CGRect) -> CGRect { CGRect(x: f.minX + 8, y: f.minY + 5, width: 70, height: 24) }
+    // Windows/KDE style: minimize, maximize, close sit at the RIGHT end of the title bar.
+    static func minimizeButton(in f: CGRect) -> CGRect { CGRect(x: f.maxX - 76, y: f.minY + 9, width: 16, height: 16) }
+    static func maximizeButton(in f: CGRect) -> CGRect { CGRect(x: f.maxX - 52, y: f.minY + 9, width: 16, height: 16) }
+    static func closeButton(in f: CGRect) -> CGRect { CGRect(x: f.maxX - 28, y: f.minY + 9, width: 16, height: 16) }
+    static func titleButtons(in f: CGRect) -> CGRect { CGRect(x: f.maxX - 84, y: f.minY + 5, width: 76, height: 24) }
 
     // Tabs of a web window, in its title bar after the three buttons, then a "+" for a new tab.
-    static let tabsX: CGFloat = 84
+    static let tabsX: CGFloat = 12          // title buttons live on the right now; tabs start at the left edge
     static func tabRect(_ i: Int, count: Int, in f: CGRect) -> CGRect {
-        let avail = f.width - tabsX - 44
+        let avail = f.width - tabsX - 100   // keep clear of the right-side title buttons
         let w = max(44, min(200, avail / CGFloat(max(1, count))))
         return CGRect(x: f.minX + tabsX + CGFloat(i) * w, y: f.minY + 4, width: w - 4, height: titleBar - 6)
     }
@@ -35,7 +36,7 @@ enum Layout {
     }
     static func newTabRect(count: Int, in f: CGRect) -> CGRect {
         let last = tabRect(count - 1, count: count, in: f)
-        return CGRect(x: min(last.maxX + 6, f.maxX - 32), y: f.minY + 5, width: 24, height: 24)
+        return CGRect(x: min(last.maxX + 6, f.maxX - 104), y: f.minY + 5, width: 24, height: 24)
     }
 
     // Address bar of a web window, below the title bar.

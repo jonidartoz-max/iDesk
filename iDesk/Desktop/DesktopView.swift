@@ -410,13 +410,13 @@ private struct TitleBar: View {
             if keepOnTop {
                 Image(systemName: "pin.fill").font(.system(size: 10)).foregroundStyle(.yellow)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
-                    .padding(.trailing, 10)
+                    .padding(.trailing, 96)
             }
             HStack {
-                TitleButtons(frame: frame, focused: focused, cursor: cursor)
                 Spacer()
+                TitleButtons(frame: frame, focused: focused, cursor: cursor)
             }
-            .padding(.leading, 12)
+            .padding(.trailing, 10)
             .frame(maxHeight: .infinity)
             if let tabs {
                 TabStrip(titles: tabs, active: activeTab, focused: focused, frame: frame, cursor: cursor)
@@ -425,8 +425,9 @@ private struct TitleBar: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(focused ? .primary : .secondary)
                     .lineLimit(1)
-                    .padding(.horizontal, 90)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.leading, 12)
+                    .padding(.trailing, 100)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             }
         }
     }
@@ -598,29 +599,29 @@ private struct BookmarksBar: View {
     }
 }
 
-/// Three round buttons; symbols appear when the pointer hovers (like macOS).
+/// Minimize, maximize, close at the title bar's right end, as on Windows / KDE: the symbols are
+/// always visible; the close button turns red when the pointer is on it.
 private struct TitleButtons: View {
     let frame: CGRect
     let focused: Bool
     @ObservedObject var cursor: CursorModel
 
     var body: some View {
-        let hovered = Layout.titleButtons(in: frame).contains(cursor.position)
-        let active = focused || hovered
-        HStack(spacing: 6) {
-            dot(.red, "xmark", 8, active, hovered)
-            dot(.yellow, "minus", 8, active, hovered)
-            dot(.green, "arrow.up.left.and.arrow.down.right", 7, active, hovered)
+        let p = cursor.position
+        HStack(spacing: 4) {
+            btn("minus", hover: Layout.minimizeButton(in: frame).insetBy(dx: -4, dy: -4).contains(p), close: false)
+            btn("square", hover: Layout.maximizeButton(in: frame).insetBy(dx: -4, dy: -4).contains(p), close: false)
+            btn("xmark", hover: Layout.closeButton(in: frame).insetBy(dx: -4, dy: -4).contains(p), close: true)
         }
     }
 
-    private func dot(_ c: Color, _ symbol: String, _ size: CGFloat, _ active: Bool, _ hovered: Bool) -> some View {
-        Circle().fill(active ? c : Color(white: 0.35))
-            .frame(width: 16, height: 16)
-            .overlay(Image(systemName: symbol)
-                .font(.system(size: size, weight: .bold))
-                .foregroundStyle(.black.opacity(0.6))
-                .opacity(hovered ? 1 : 0))
+    private func btn(_ symbol: String, hover: Bool, close: Bool) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(close && hover ? Color.white : Color.white.opacity(focused ? 0.85 : 0.45))
+            .frame(width: 20, height: 20)
+            .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(close && hover ? Color.red : Color.white.opacity(hover ? 0.14 : 0)))
     }
 }
 
