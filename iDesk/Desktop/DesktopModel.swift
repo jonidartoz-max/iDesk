@@ -311,6 +311,8 @@ final class DesktopModel: ObservableObject {
     private var screenshotPreviewWork: DispatchWorkItem?
     /// Sticky notes on the desktop, and the one being typed in.
     @Published var stickies: [StickyNote] = StickyNote.load() { didSet { StickyNote.save(stickies) } }
+    /// True while the desktop Notes widget takes typed text (a click on the widget toggles it).
+    @Published var editingNotes = false
     @Published var editingSticky: UUID? { didSet { if editingSticky != oldValue { Self.typingTargetChanged() } } }
     /// Locked (LockScreen.swift): nothing reaches the desktop until Face ID / the passcode on the iPhone.
     @Published var isLocked = false
@@ -2088,6 +2090,7 @@ final class DesktopModel: ObservableObject {
             return
         }
         if editingSticky != nil, stickyIndex(at: p) == nil { editingSticky = nil }
+        if editingNotes, widget(at: p) != .notes { editingNotes = false }
         let now = CACurrentMediaTime()
         let isDouble = now - lastClickTime < 0.45 && hypot(p.x - lastClickPoint.x, p.y - lastClickPoint.y) < 10
         lastClickTime = isDouble ? 0 : now
@@ -2856,6 +2859,7 @@ final class DesktopModel: ObservableObject {
         if showSpotlight { spotlightQuery += s.replacingOccurrences(of: "\n", with: ""); return }
         if showClipboard { return }
         if let id = editingSticky, let i = stickies.firstIndex(where: { $0.id == id }) { stickies[i].text += s; return }
+        if editingNotes { WidgetStore.shared.notesText += s; return }
         if showLauncher { launcherQuery += s; return }
         if let w = focused, w.findQuery != nil {
             w.findQuery? += s.replacingOccurrences(of: "\n", with: "")
@@ -2918,6 +2922,10 @@ final class DesktopModel: ObservableObject {
             if !stickies[i].text.isEmpty { stickies[i].text.removeLast() }
             return
         }
+        if editingNotes {
+            if !WidgetStore.shared.notesText.isEmpty { WidgetStore.shared.notesText.removeLast() }
+            return
+        }
         if let w = focused, w.findQuery != nil {
             if w.findQuery?.isEmpty == false { w.findQuery?.removeLast(); w.runFind() }
             return
@@ -2934,6 +2942,7 @@ final class DesktopModel: ObservableObject {
         if showClipboard { pasteFromClipboard(); return }
         if showEmoji { insertEmoji(); return }
         if let id = editingSticky, let i = stickies.firstIndex(where: { $0.id == id }) { stickies[i].text += "\n"; return }
+        if editingNotes { WidgetStore.shared.notesText += "\n"; return }
         if showLauncher {
             if let first = launcherItems.first { showLauncher = false; open(first) } else { searchWebFromLauncher() }
             return
@@ -3424,6 +3433,7 @@ final class DesktopModel: ObservableObject {
         if showEmoji { showEmoji = false; return }
         if fillSuggestion != nil { fillSuggestion = nil; return }
         if editingSticky != nil { editingSticky = nil; return }
+        if editingNotes { editingNotes = false; return }
         if let w = focused, w.findQuery != nil { closeFind(w); return }
         if switcher != nil { switcherCommit?.cancel(); switcher = nil; return }
         if recents != nil { closeRecents(); return }

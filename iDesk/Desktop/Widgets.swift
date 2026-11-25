@@ -5,7 +5,7 @@ import CoreLocation
 /// Desktop widgets: clock, month, weather, upcoming events, reminders, a Pomodoro timer. Each can be shown or hidden
 /// (desktop menu → Widgets) and dragged anywhere on the desktop; places are kept.
 enum WidgetKind: String, CaseIterable, Codable {
-    case clock, calendar, weather, events, reminders, pomodoro
+    case clock, calendar, weather, events, reminders, pomodoro, notes
 
     var title: String.LocalizationValue {
         switch self {
@@ -15,6 +15,7 @@ enum WidgetKind: String, CaseIterable, Codable {
         case .events: return "Upcoming events"
         case .reminders: return "Reminders"
         case .pomodoro: return "Focus timer"
+        case .notes: return "Notes"
         }
     }
     var symbol: String {
@@ -25,6 +26,7 @@ enum WidgetKind: String, CaseIterable, Codable {
         case .events: return "calendar.badge.clock"
         case .reminders: return "checklist"
         case .pomodoro: return "timer"
+        case .notes: return "note.text"
         }
     }
     static let width: CGFloat = 236
@@ -36,6 +38,7 @@ enum WidgetKind: String, CaseIterable, Codable {
         case .events: return 156
         case .reminders: return 156
         case .pomodoro: return 124
+        case .notes: return 212
         }
     }
 }
@@ -62,6 +65,13 @@ final class WidgetStore: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published private(set) var calendarNote: String?
     @Published private(set) var remindersNote: String?
 
+    // Notes widget (takes the month calendar's place, his ask): editable on the desktop,
+    // persisted across restarts.
+    @Published var notesText: String = UserDefaults.standard.string(forKey: WidgetStore.notesKey) ?? "" {
+        didSet { UserDefaults.standard.set(notesText, forKey: WidgetStore.notesKey) }
+    }
+    private static let notesKey = "iDesk.notesWidget.text"
+
     // Focus timer
     enum Phase: String { case focus, rest }
     @Published private(set) var phase: Phase = .focus
@@ -79,10 +89,17 @@ final class WidgetStore: NSObject, ObservableObject, CLLocationManagerDelegate {
         } else {
             enabled = [.clock, .calendar]
         }
+        // The notes widget takes the calendar's place (his ask): swap it into the calendar's slot.
+        if let i = enabled.firstIndex(of: .calendar) {
+            if enabled.contains(.notes) { enabled.remove(at: i) } else { enabled[i] = .notes }
+            UserDefaults.standard.set(enabled.map(\.rawValue), forKey: Self.enabledKey)
+        }
         if let data = UserDefaults.standard.data(forKey: Self.positionsKey),
            let saved = try? JSONDecoder().decode([String: [Double]].self, from: data) {
             for (k, v) in saved { if let kind = WidgetKind(rawValue: k), v.count == 2 { positions[kind] = CGPoint(x: v[0], y: v[1]) } }
         }
+        // …and keep the place the calendar was dragged to.
+        if let p = positions.removeValue(forKey: .calendar) { positions[.notes] = p; savePositions() }
         location.delegate = self
         NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: store, queue: .main) { [weak self] _ in
             self?.loadCalendar()
@@ -295,17 +312,22 @@ extension DesktopModel {
         return CGRect(x: r.minX + 16 + CGFloat(i) * 76, y: r.maxY - 42, width: 68, height: 28)
     }
 
-    /// A click on a widget: the timer's buttons; the others open what they show.
+    /// A click on a widget: the timer's buttons; the notes widget starts (or stops) editing;
+    /// the others open what they show.
     func clickWidget(_ k: WidgetKind, at p: CGPoint) {
         let store = WidgetStore.shared
         switch k {
         case .pomodoro:
             if pomodoroButtonRect(0).contains(p) { store.startPause() }
             else if pomodoroButtonRect(1).contains(p) { store.reset() }
+            editingNotes = false
         case .weather:
             store.refresh()
+            editingNotes = false
+        case .notes:
+            editingNotes.toggle()
         default:
-            break
+            editingNotes = false
         }
     }
 
@@ -355,6 +377,7 @@ struct DesktopWidgetsView: View {
         case .events: events
         case .reminders: reminders
         case .pomodoro: pomodoro(date)
+        case .notes: notes
         }
     }
 
@@ -365,6 +388,22 @@ struct DesktopWidgetsView: View {
 
     private func note(_ s: String) -> some View {
         Text(verbatim: s).font(.system(size: 12)).foregroundStyle(.white.opacity(0.6)).fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// The sticky-notes widget: what he typed, a caret while editing, a hint while empty.
+    private var notes: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            header(.notes)
+            let text = store.notesText
+            if text.isEmpty, !model.editingNotes {
+                Text("Click here, then type").font(.system(size: 12)).foregroundStyle(.white.opacity(0.45))
+            } else {
+                Text(verbatim: text + (model.editingNotes ? "\u{258f}" : ""))
+                    .font(.system(size: 13)).foregroundStyle(.white.opacity(0.92))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
     }
 
     private func clock(_ date: Date) -> some View {
