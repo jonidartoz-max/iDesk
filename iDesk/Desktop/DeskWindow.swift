@@ -279,6 +279,9 @@ final class DeskWindow: NSObject, ObservableObject, Identifiable, WKUIDelegate, 
         config.userContentController.addUserScript(WebVolume.script)
         config.userContentController.addUserScript(ControllerInput.pageScript)
         config.userContentController.add(gamepadBridge, name: ControllerInput.messageName)
+        // Auto keyboard: pages report text-field focus, the phone desktop opens/closes the keyboard.
+        config.userContentController.addUserScript(TypingFocus.script)
+        config.userContentController.add(TypingFocus.shared, name: TypingFocus.messageName)
         let tab = WKWebView(frame: CGRect(origin: .zero, size: frame.size), configuration: config)
         Self.load(url, in: tab)
         add(tab, activate: activate)

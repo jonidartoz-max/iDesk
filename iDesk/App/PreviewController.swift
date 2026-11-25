@@ -87,6 +87,9 @@ final class PreviewController: UIViewController {
                                                name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardChanged(_:)),
                                                name: UIResponder.keyboardWillHideNotification, object: nil)
+        // Auto keyboard: a text field tapped in any window opens the keyboard, leaving it closes it.
+        NotificationCenter.default.addObserver(self, selector: #selector(typingFocusChanged(_:)),
+                                               name: .iDeskTypingFocus, object: nil)
 
         // Errors and install results (they used to appear on the controller screen).
         noticeWatch = model.$notice.compactMap { $0 }.receive(on: RunLoop.main).sink { [weak self] text in
@@ -219,6 +222,12 @@ final class PreviewController: UIViewController {
 
     @objc private func toggleKeyboard() {
         if keys.isFirstResponder { keys.resignFirstResponder() } else { keys.becomeFirstResponder() }
+    }
+
+    @objc private func typingFocusChanged(_ note: Notification) {
+        let focus = (note.object as? Bool) ?? false
+        if focus, !keys.isFirstResponder { keys.becomeFirstResponder() }
+        if !focus, keys.isFirstResponder { keys.resignFirstResponder() }
     }
 
     /// Native-iOS keyboard feel: the desktop resizes to sit above the keyboard, animated with the
