@@ -22,6 +22,11 @@ final class TerminalSession: ObservableObject {
     private var mode: Mode = .ssh
 
     let terminalView: TerminalView
+    /// Non-nil when this window reattached to a local session another window booted: the engine
+    /// owns that session's view, so this window shows and sizes that view instead.
+    private var attached: TerminalSession?
+    /// The view this window actually shows.
+    var displayView: TerminalView { attached?.terminalView ?? terminalView }
     /// The SSH client, boxed so a nonisolated deinit can close it (Swift 6 deinit rules).
     private final class ConnBox: @unchecked Sendable { var client: SSHClient? }
     private let connBox = ConnBox()
@@ -45,9 +50,16 @@ final class TerminalSession: ObservableObject {
 
     private func banner() {
         feedText("iDesk Terminal\r\n\r\n")
-        feedText("  1. Local   Alpine Linux on this device (slower, works offline)\r\n")
-        feedText("  2. SSH     your PC, server or WSL (full speed)\r\n\r\n")
-        feedText("Type 1 or 2: ")
+        if LocalShell.session != nil {
+            feedText("  1. Local   lanjutkan sesi Alpine yang masih berjalan\r\n")
+            feedText("  2. SSH     your PC, server or WSL (full speed)\r\n")
+            feedText("  R. Reset   matikan sesi local yang nyangkut, boot baru\r\n\r\n")
+            feedText("Type 1, 2 or R: ")
+        } else {
+            feedText("  1. Local   Alpine Linux on this device (slower, works offline)\r\n")
+            feedText("  2. SSH     your PC, server or WSL (full speed)\r\n\r\n")
+            feedText("Type 1 or 2: ")
+        }
     }
 
     private enum Keys {
@@ -79,7 +91,7 @@ final class TerminalSession: ObservableObject {
         feedText("Password: ")
     }
 
-    private func feedText(_ s: String) { terminalView.feed(text: s) }
+    private func feedText(_ s: String) { displayView.feed(text: s) }
 
     /// A visible error, then Enter starts over.
     private func fail(_ message: String) {
@@ -97,6 +109,7 @@ final class TerminalSession: ObservableObject {
         case .pickMode:
             if s == "1" { startLocal() }
             else if s == "2" { startSSH() }
+            else if (s == "r" || s == "R"), LocalShell.session != nil { resetLocal() }
         case .askHost, .askUser:
             draft += s
             feedText(s)
@@ -184,7 +197,7 @@ final class TerminalSession: ObservableObject {
 
     /// Trackpad / mouse wheel: scroll the terminal's scrollback (the desktop's shield keeps touches).
     func scroll(dx: CGFloat, dy: CGFloat) {
-        let v = terminalView
+        let v = displayView
         let minY = -v.adjustedContentInset.top
         let maxY = max(minY, v.contentSize.height - v.bounds.height)
         let y = max(minY, min(v.contentOffset.y + dy, maxY))
@@ -202,7 +215,7 @@ final class TerminalSession: ObservableObject {
 
     /// The window changed size: tell the remote the terminal's new columns and rows.
     func updateSize() {
-        let t = terminalView.getTerminal()
+        let t = displayView.getTerminal()
         if mode == .local, t.cols != lastCols || t.rows != lastRows {
             lastCols = t.cols
             lastRows = t.rows
@@ -219,39 +232,92 @@ final class TerminalSession: ObservableObject {
 
     private func startLocal() {
         mode = .local
-        guard !LocalShell.running else {
-            feedText("\r\nThe local shell is already running in another window.\r\nPress Enter to pick a mode.\r\n")
-            stage = .closed
+        // The engine is already running: reattach this window to it instead of blocking or
+        // booting twice. The engine keeps feeding the original session's view, which this
+        // window now shows (displayView), so the running shell and its scrollback come back.
+        if let existing = LocalShell.session {
+            attached = existing
+            LocalShell.viewer = self
+            stage = .connected
+            DispatchQueue.main.async { self.updateSize() }  // SIGWINCH: redraw at this window's size
             return
         }
-        feedText("\r\n\u{1B}[1mLocal mode.\u{1B}[0m Booting Alpine Linux (first boot takes a moment)...\r\n")
-        guard let rootfs = LocalShell.installRootfs() else {
-            fail("The bundled Alpine rootfs is missing.")
-            return
-        }
+        feedText("\r\n\u{1B}[1mLocal mode.\u{1B}[0m Menyiapkan Alpine Linux...\r\n")
         stage = .connecting
-        LocalShell.running = true
-        LocalShell.output = { [weak self] bytes in
-            DispatchQueue.main.async { self?.terminalView.feed(byteArray: bytes[...]) }
+        Thread.detachNewThread { [weak self] in
+            let rootfs = LocalShell.installRootfs { pct in
+                DispatchQueue.main.async {
+                    self?.feedText("\rMenyalin sistem Alpine (hanya boot pertama)... \(pct)%   ")
+                }
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard let rootfs else {
+                    self.fail("Rootfs Alpine tidak ditemukan di bundle.")
+                    return
+                }
+                self.bootLocal(rootfs: rootfs)
+            }
+        }
+    }
+
+    /// Boots the embedded kernel on a dedicated thread and wires its console into this session.
+    private func bootLocal(rootfs: String) {
+        feedText("\r\nBooting Alpine Linux...\r\n")
+        LocalShell.session = self
+        LocalShell.viewer = self
+        LocalShell.output = { bytes in
+            DispatchQueue.main.async { LocalShell.session?.terminalView.feed(byteArray: bytes[...]) }
         }
         idesk_shell_set_output_callback { buf, len in
             guard let buf, len > 0 else { return }
-            let bytes = Array(UnsafeRawBufferPointer(start: buf, count: Int(len)))
-            LocalShell.output?(bytes)
+            LocalShell.output?(Array(UnsafeRawBufferPointer(start: buf, count: Int(len))))
         }
-        let t = terminalView.getTerminal()
+        let t = displayView.getTerminal()
         idesk_shell_resize(Int32(t.cols), Int32(t.rows))
-        Thread.detachNewThread { [weak self] in
+        Thread.detachNewThread {
             let err = idesk_shell_boot(rootfs)
-            LocalShell.running = false
             DispatchQueue.main.async {
-                guard let self else { return }
-                if self.stage == .connected || self.stage == .connecting {
-                    self.fail(err < 0 ? "Local shell failed to boot (error \(-err))." : "Local shell exited.")
-                }
+                LocalShell.session = nil
+                LocalShell.output = nil
+                let viewer = LocalShell.viewer
+                LocalShell.viewer = nil
+                viewer?.localEngineEnded(err)
             }
         }
         stage = .connected
+    }
+
+    /// R in the mode picker: a local session exists but is stuck or unwanted. Ask the guest to
+    /// exit, wait for the engine to come down, then boot fresh.
+    private func resetLocal() {
+        mode = .local
+        stage = .connecting
+        feedText("\r\nMereset sesi local...\r\n")
+        let interrupt = "\u{3}"   // Ctrl-C: get back to the shell prompt if a program is running
+        idesk_shell_input(interrupt, Int32(interrupt.utf8.count))
+        let exitCmd = "exit\n"
+        idesk_shell_input(exitCmd, Int32(exitCmd.utf8.count))
+        awaitResetAndReboot(attempts: 40)   // 8 seconds
+    }
+
+    private func awaitResetAndReboot(attempts: Int) {
+        if LocalShell.session == nil {
+            startLocal()
+            return
+        }
+        guard attempts > 0 else {
+            fail("Reset gagal, mesin tidak merespons. Tutup window ini lalu coba lagi, atau restart aplikasi.")
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.awaitResetAndReboot(attempts: attempts - 1)
+        }
+    }
+
+    /// The kernel stopped (shell exited, or boot failed): tell the window that is showing it.
+    private func localEngineEnded(_ err: Int32) {
+        fail(err < 0 ? "Local shell gagal boot (error \(-err))." : "Sesi local berakhir.")
     }
 
     // MARK: SSH
@@ -304,21 +370,45 @@ final class TerminalSession: ObservableObject {
 /// State of the one local shell: the embedded kernel boots once per process, so one local
 /// terminal at a time (SSH sessions are unlimited, they are just network connections).
 enum LocalShell {
-    static var running = false
-    /// Where console bytes from the kernel go (set by the session running the local shell).
+    /// The session that booted the engine, held strongly so the engine keeps a live screen buffer
+    /// even when its window was closed; a later window reattaches to it (displayView).
+    static var session: TerminalSession?
+    /// The window currently showing the local shell (comes and goes as windows open and close).
+    static weak var viewer: TerminalSession?
+    /// Where console bytes from the kernel go.
     static var output: (([UInt8]) -> Void)?
 
     /// The fakefs rootfs must be writable (meta.db changes as the guest touches files): copy the
-    /// bundled Alpine tree to Application Support on first run. Returns its path.
-    static func installRootfs() -> String? {
+    /// bundled Alpine tree to Application Support on first run. Returns its path. Copies file by
+    /// file and reports percent so first boot shows progress instead of looking hung.
+    static func installRootfs(progress: (Int) -> Void) -> String? {
         guard let bundled = Bundle.module.resourceURL?.appendingPathComponent("alpine-rootfs") else { return nil }
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let fm = FileManager.default
+        let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let installed = support.appendingPathComponent("alpine-rootfs")
-        if !FileManager.default.fileExists(atPath: installed.path) {
-            try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
-            guard (try? FileManager.default.copyItem(at: bundled, to: installed)) != nil else { return nil }
+        if fm.fileExists(atPath: installed.path) { return installed.path }
+        guard let items = fm.enumerator(at: bundled, includingPropertiesForKeys: nil)?.allObjects as? [URL] else { return nil }
+        let total = max(items.count, 1)
+        do {
+            try fm.createDirectory(at: installed, withIntermediateDirectories: true)
+            for (i, url) in items.enumerated() {
+                let rel = String(url.path.dropFirst(bundled.path.count + 1))
+                let dst = installed.appendingPathComponent(rel)
+                var isDir: ObjCBool = false
+                fm.fileExists(atPath: url.path, isDirectory: &isDir)
+                if isDir.boolValue {
+                    try fm.createDirectory(at: dst, withIntermediateDirectories: true)
+                } else {
+                    try fm.copyItem(at: url, to: dst)
+                }
+                if i % 25 == 0 { progress(i * 100 / total) }
+            }
+            progress(100)
+            return installed.path
+        } catch {
+            try? fm.removeItem(at: installed)
+            return nil
         }
-        return installed.path
     }
 }
 
@@ -327,7 +417,7 @@ enum LocalShell {
 struct TerminalHost: UIViewRepresentable {
     @ObservedObject var session: TerminalSession
 
-    func makeUIView(context: Context) -> TerminalView { session.terminalView }
+    func makeUIView(context: Context) -> TerminalView { session.displayView }
 
     func updateUIView(_ view: TerminalView, context: Context) {
         session.updateSize()
