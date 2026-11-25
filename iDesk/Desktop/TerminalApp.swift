@@ -311,7 +311,7 @@ enum LocalShell {
     /// The fakefs rootfs must be writable (meta.db changes as the guest touches files): copy the
     /// bundled Alpine tree to Application Support on first run. Returns its path.
     static func installRootfs() -> String? {
-        guard let bundled = Bundle.main.resourceURL?.appendingPathComponent("alpine-rootfs") else { return nil }
+        guard let bundled = Bundle.module.resourceURL?.appendingPathComponent("alpine-rootfs") else { return nil }
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let installed = support.appendingPathComponent("alpine-rootfs")
         if !FileManager.default.fileExists(atPath: installed.path) {
