@@ -2204,7 +2204,7 @@ final class DesktopModel: ObservableObject {
     private func refreshGuestKeyboard(_ guest: UIWindow, after delay: TimeInterval = 0) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
-            let hasInput = GuestTouch.keyInputInWindow(guest) != nil
+            let hasInput = GuestTouch.keyInput(in: guest) != nil
             if hasInput {
                 self.guestKeyboardWindow = guest
                 NotificationCenter.default.post(name: .iDeskTypingFocus, object: true)
