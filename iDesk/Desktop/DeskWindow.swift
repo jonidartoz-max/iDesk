@@ -283,6 +283,8 @@ final class DeskWindow: NSObject, ObservableObject, Identifiable, WKUIDelegate, 
         config.userContentController.addUserScript(TypingFocus.script)
         config.userContentController.add(TypingFocus.shared, name: TypingFocus.messageName)
         let tab = WKWebView(frame: CGRect(origin: .zero, size: frame.size), configuration: config)
+        // Safari parity: dragging the page down dismisses the keyboard.
+        tab.scrollView.keyboardDismissMode = .interactive
         Self.load(url, in: tab)
         add(tab, activate: activate)
     }

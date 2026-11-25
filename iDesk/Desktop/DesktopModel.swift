@@ -1280,7 +1280,12 @@ final class DesktopModel: ObservableObject {
         scheduleSave()
     }
 
+    /// A light tap on snap, minimize and maximize — subtle confirmation like iPad window cues.
+    private static let hapticLight = UIImpactFeedbackGenerator(style: .light)
+    static func hapticTap() { hapticLight.impactOccurred() }
+
     func minimize(_ w: DeskWindow) {
+        Self.hapticTap()
         w.isMinimized = true
         minimizeStack.removeAll { $0 == w.id }
         minimizeStack.append(w.id)
@@ -1370,6 +1375,16 @@ final class DesktopModel: ObservableObject {
                 }
             }
             let s = min(max(scale, 0.25), 4)
+            // Pinch well past the minimum size = minimize the window: the iPad "pinch an app
+            // closed" habit, scoped to the window under the fingers.
+            if widenBegin.width * s < Layout.minWindowSize.width * 0.85 {
+                widenID = nil
+                widenArmed = false
+                isWidenActive = false
+                flushPendingFrame()
+                minimize(w)
+                return
+            }
             let area = desktopArea
             var f = CGRect.zero
             f.size.width = min(max(widenBegin.width * s, Layout.minWindowSize.width), area.width)
@@ -1430,6 +1445,7 @@ final class DesktopModel: ObservableObject {
     }
 
     func toggleMaximize(_ w: DeskWindow) {
+        Self.hapticTap()
         if w.isMaximized {
             w.frame = w.restoreFrame ?? w.frame
             w.isMaximized = false
@@ -1448,6 +1464,7 @@ final class DesktopModel: ObservableObject {
             if !w.isMaximized { toggleMaximize(w) }
             return
         }
+        Self.hapticTap()
         if !w.isMaximized && !w.isSnapped { w.restoreFrame = w.frame }
         w.frame = snapRect(s)
         w.isMaximized = false

@@ -57,6 +57,16 @@ final class PreviewController: UIViewController {
         let pan = UIPanGestureRecognizer(target: self, action: #selector(panned))
         pan.maximumNumberOfTouches = 1
         shield.addGestureRecognizer(pan)
+        // Safari edge swipes: from the left edge = back, from the right edge = forward
+        // in the browser window under the finger.
+        let edgeL = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(edgeSwiped(_:)))
+        edgeL.edges = .left
+        let edgeR = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(edgeSwiped(_:)))
+        edgeR.edges = .right
+        shield.addGestureRecognizer(edgeL)
+        shield.addGestureRecognizer(edgeR)
+        pan.require(toFail: edgeL)
+        pan.require(toFail: edgeR)
         let scroll = UIPanGestureRecognizer(target: self, action: #selector(scrolled))
         scroll.minimumNumberOfTouches = 2
         shield.addGestureRecognizer(scroll)
@@ -174,7 +184,16 @@ final class PreviewController: UIViewController {
             model.mouseDown()
             model.moveCursor(dx: t.x, dy: t.y)
             panScrolled = false
+            keyboardDragDismiss = keyboardHeight > 0 && p.y > host.view.bounds.maxY - 120
         case .changed:
+            if keyboardDragDismiss {
+                let t = g.translation(in: host.view)
+                if t.y > 60, t.y > abs(t.x) {
+                    keys.resignFirstResponder()
+                    DesktopModel.hapticTap()
+                    keyboardDragDismiss = false
+                }
+            }
             if model.touchScrollsFreely {
                 if !panScrolled { panScrolled = true; momentum.cancel() }
                 model.scroll(dx: -(p.x - lastPan.x), dy: -(p.y - lastPan.y))
@@ -188,11 +207,30 @@ final class PreviewController: UIViewController {
                 panScrolled = false
             }
             model.mouseUp()
+            keyboardDragDismiss = false
         }
         lastPan = p
     }
 
     private var panScrolled = false
+    private var edgeStart: CGPoint = .zero
+    /// Set on touch-down while the keyboard is open and the finger starts just above it:
+    /// a downward drag from there dismisses the keyboard, like swiping it away.
+    private var keyboardDragDismiss = false
+
+    @objc private func edgeSwiped(_ g: UIScreenEdgePanGestureRecognizer) {
+        switch g.state {
+        case .began:
+            edgeStart = desktopPoint(g)
+        case .ended:
+            let t = g.translation(in: host.view)
+            guard abs(t.x) > 48, abs(t.x) > abs(t.y) else { return }
+            guard let w = model.topWindow(at: edgeStart), let web = w.webView else { return }
+            if g.edges == .left, web.canGoBack { web.goBack(); DesktopModel.hapticTap() }
+            if g.edges == .right, web.canGoForward { web.goForward(); DesktopModel.hapticTap() }
+        default: break
+        }
+    }
 
     @objc private func pinched(_ g: UIPinchGestureRecognizer) {
         model.pinchWiden(scale: g.scale, at: desktopPoint(g), state: g.state)
