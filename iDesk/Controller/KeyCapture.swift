@@ -232,6 +232,10 @@ final class PhoneWindow: UIWindow {
         let shift = flags.contains(.shift)
         let chars = key.charactersIgnoringModifiers.lowercased()
 
+        // A focused SSH terminal takes Ctrl + letter as a control byte (Ctrl+C, Ctrl+Z…), not a desktop shortcut.
+        if flags.contains(.control), !flags.contains(.command), chars.count == 1, let c = chars.first,
+           model.terminalControl(c) { return true }
+
         if Self.performShortcut(chars: chars, keyCode: key.keyCode, flags: flags) { return true }
 
         switch key.keyCode {

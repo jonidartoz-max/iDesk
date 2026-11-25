@@ -2635,6 +2635,7 @@ final class DesktopModel: ObservableObject {
             return
         }
         guard contextMenu == nil, recents == nil, !showQuickPanel, p.y < taskbarHitTop, let w = topWindow(at: p), isOverContent(p, of: w) else { return }
+        if let term = w.terminal { term.scroll(dx: dx, dy: dy); return }
         if let guest = w.guestWindow {
             let local = localPoint(p, in: w)
             Self.guestInput {
@@ -2872,6 +2873,15 @@ final class DesktopModel: ObservableObject {
             return
         }
         send(s)
+    }
+
+    /// Ctrl + letter while a terminal is focused: a control byte for the shell (Ctrl+C, Ctrl+Z…),
+    /// not one of the desktop's shortcuts. True when a terminal took it.
+    func terminalControl(_ letter: Character) -> Bool {
+        guard let term = focused?.terminal,
+              let v = letter.uppercased().first?.asciiValue, v >= 65, v <= 90 else { return false }
+        term.control(letter)
+        return true
     }
 
     /// Types into the app or page in front.

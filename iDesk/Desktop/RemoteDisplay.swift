@@ -387,6 +387,9 @@ enum RemoteInput {
         if !flags.subtracting(.shift).isEmpty {
             let chars = code.hasPrefix("Key") ? String(code.dropFirst(3)).lowercased()
                 : code.hasPrefix("Digit") ? String(code.dropFirst(5)) : name.lowercased()
+            // A focused SSH terminal takes Ctrl + letter as a control byte (Ctrl+C, Ctrl+Z…), not a shortcut.
+            if flags.contains(.control), !flags.contains(.command), chars.count == 1, let c = chars.first,
+               model.terminalControl(c) { return }
             if PhoneWindow.performShortcut(chars: chars, keyCode: usage(code), flags: flags) { return }
         }
         switch name {

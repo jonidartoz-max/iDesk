@@ -82,7 +82,8 @@ final class TerminalSession: ObservableObject {
     func sendText(_ s: String) {
         switch stage {
         case .connected:
-            write(s)
+            // A pasted multi-line text: each line runs as if typed and Enter pressed.
+            write(s.replacingOccurrences(of: "\n", with: "\r"))
         case .askHost, .askUser:
             draft += s
             feedText(s)
@@ -163,6 +164,15 @@ final class TerminalSession: ObservableObject {
     func control(_ letter: Character) {
         guard stage == .connected, let v = letter.uppercased().first?.asciiValue, v >= 65, v <= 90 else { return }
         write(String(bytes: [v - 64], encoding: .utf8) ?? "")
+    }
+
+    /// Trackpad / mouse wheel: scroll the terminal's scrollback (the desktop's shield keeps touches).
+    func scroll(dx: CGFloat, dy: CGFloat) {
+        let v = terminalView
+        let minY = -v.adjustedContentInset.top
+        let maxY = max(minY, v.contentSize.height - v.bounds.height)
+        let y = max(minY, min(v.contentOffset.y + dy, maxY))
+        if y != v.contentOffset.y { v.setContentOffset(CGPoint(x: v.contentOffset.x, y: y), animated: false) }
     }
 
     private func write(_ s: String) {
