@@ -17,7 +17,6 @@
 #include "fs/path.h"
 #include "fs/tty.h"
 #include "fs/real.h"
-#include "fs/fake.h"
 #include "misc.h"
 
 #include "ish-embed.h"

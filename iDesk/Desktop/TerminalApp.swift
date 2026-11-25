@@ -12,11 +12,14 @@ import NIOSSH
 /// desktop's touch shield means text fields and the terminal view never become first responder, so
 /// typing arrives through DesktopModel.send / sendKey and the session echoes prompts itself.
 final class TerminalSession: ObservableObject {
-    /// Where the session is: asking for the connection details, connecting, or live.
+    /// Where the session is: choosing a mode, asking for SSH details, connecting, or live.
     enum Stage: Equatable {
-        case askHost, askUser, askPass, connecting, connected, closed
+        case pickMode, askHost, askUser, askPass, connecting, connected, closed
     }
-    @Published private(set) var stage: Stage = .askHost
+    /// Local = Alpine Linux running on the phone (embedded iSH-ARM64); ssh = a PC / server.
+    enum Mode { case local, ssh }
+    @Published private(set) var stage: Stage = .pickMode
+    private var mode: Mode = .ssh
 
     let terminalView: TerminalView
     /// The SSH client, boxed so a nonisolated deinit can close it (Swift 6 deinit rules).
@@ -38,7 +41,13 @@ final class TerminalSession: ObservableObject {
         host = UserDefaults.standard.string(forKey: Keys.host) ?? ""
         user = UserDefaults.standard.string(forKey: Keys.user) ?? ""
         banner()
-        askHost()
+    }
+
+    private func banner() {
+        feedText("iDesk Terminal\r\n\r\n")
+        feedText("  1. Local   Alpine Linux on this device (slower, works offline)\r\n")
+        feedText("  2. SSH     your PC, server or WSL (full speed)\r\n\r\n")
+        feedText("Type 1 or 2: ")
     }
 
     private enum Keys {
@@ -48,10 +57,12 @@ final class TerminalSession: ObservableObject {
 
     // MARK: Prompts
 
-    private func banner() {
-        feedText("iDesk Terminal (SSH)\r\n")
-        feedText("Connect to your PC, server or WSL. Host keys are not verified (private use).\r\n\r\n")
+    private func startSSH() {
+        mode = .ssh
+        feedText("\r\n\u{1B}[1mSSH mode.\u{1B}[0m Host keys are not verified (private use).\r\n\r\n")
+        askHost()
     }
+
     private func askHost() {
         stage = .askHost
         draft = ""
@@ -82,8 +93,10 @@ final class TerminalSession: ObservableObject {
     func sendText(_ s: String) {
         switch stage {
         case .connected:
-            // A pasted multi-line text: each line runs as if typed and Enter pressed.
             write(s.replacingOccurrences(of: "\n", with: "\r"))
+        case .pickMode:
+            if s == "1" { startLocal() }
+            else if s == "2" { startSSH() }
         case .askHost, .askUser:
             draft += s
             feedText(s)
@@ -103,13 +116,15 @@ final class TerminalSession: ObservableObject {
             guard !draft.isEmpty else { return }
             draft.removeLast()
             feedText("\u{8}\u{20}\u{8}")        // erase the echoed character
-        case .connecting, .closed:
+        case .pickMode, .connecting, .closed:
             break
         }
     }
 
     func keyEnter() {
         switch stage {
+        case .pickMode:
+            break
         case .askHost:
             if !draft.isEmpty { host = draft }
             // "host:port" also names the port.
@@ -135,7 +150,8 @@ final class TerminalSession: ObservableObject {
             write("\r")
         case .closed:
             feedText("\r\n")
-            askHost()
+            stage = .pickMode
+            banner()
         case .connecting:
             break
         }
@@ -176,6 +192,10 @@ final class TerminalSession: ObservableObject {
     }
 
     private func write(_ s: String) {
+        if mode == .local {
+            idesk_shell_input(s, Int32(s.utf8.count))
+            return
+        }
         guard let stdin else { return }
         Task { try? await stdin.write(ByteBuffer(string: s)) }
     }
@@ -183,10 +203,55 @@ final class TerminalSession: ObservableObject {
     /// The window changed size: tell the remote the terminal's new columns and rows.
     func updateSize() {
         let t = terminalView.getTerminal()
+        if mode == .local, t.cols != lastCols || t.rows != lastRows {
+            lastCols = t.cols
+            lastRows = t.rows
+            idesk_shell_resize(Int32(t.cols), Int32(t.rows))
+            return
+        }
         guard let stdin, t.cols != lastCols || t.rows != lastRows else { return }
         lastCols = t.cols
         lastRows = t.rows
         Task { try? await stdin.changeSize(cols: t.cols, rows: t.rows, pixelWidth: 0, pixelHeight: 0) }
+    }
+
+    // MARK: Local shell (embedded iSH-ARM64)
+
+    private func startLocal() {
+        mode = .local
+        guard !LocalShell.running else {
+            feedText("\r\nThe local shell is already running in another window.\r\nPress Enter to pick a mode.\r\n")
+            stage = .closed
+            return
+        }
+        feedText("\r\n\u{1B}[1mLocal mode.\u{1B}[0m Booting Alpine Linux (first boot takes a moment)...\r\n")
+        guard let rootfs = LocalShell.installRootfs() else {
+            fail("The bundled Alpine rootfs is missing.")
+            return
+        }
+        stage = .connecting
+        LocalShell.running = true
+        LocalShell.output = { [weak self] bytes in
+            DispatchQueue.main.async { self?.terminalView.feed(byteArray: bytes[...]) }
+        }
+        idesk_shell_set_output_callback { buf, len in
+            guard let buf, len > 0 else { return }
+            let bytes = Array(UnsafeRawBufferPointer(start: buf, count: Int(len)))
+            LocalShell.output?(bytes)
+        }
+        let t = terminalView.getTerminal()
+        idesk_shell_resize(Int32(t.cols), Int32(t.rows))
+        Thread.detachNewThread { [weak self] in
+            let err = idesk_shell_boot(rootfs)
+            LocalShell.running = false
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if self.stage == .connected || self.stage == .connecting {
+                    self.fail(err < 0 ? "Local shell failed to boot (error \(-err))." : "Local shell exited.")
+                }
+            }
+        }
+        stage = .connected
     }
 
     // MARK: SSH
@@ -233,6 +298,27 @@ final class TerminalSession: ObservableObject {
     deinit {
         let client = connBox.client
         Task.detached { try? await client?.close() }
+    }
+}
+
+/// State of the one local shell: the embedded kernel boots once per process, so one local
+/// terminal at a time (SSH sessions are unlimited, they are just network connections).
+enum LocalShell {
+    static var running = false
+    /// Where console bytes from the kernel go (set by the session running the local shell).
+    static var output: (([UInt8]) -> Void)?
+
+    /// The fakefs rootfs must be writable (meta.db changes as the guest touches files): copy the
+    /// bundled Alpine tree to Application Support on first run. Returns its path.
+    static func installRootfs() -> String? {
+        guard let bundled = Bundle.main.resourceURL?.appendingPathComponent("alpine-rootfs") else { return nil }
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let installed = support.appendingPathComponent("alpine-rootfs")
+        if !FileManager.default.fileExists(atPath: installed.path) {
+            try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+            guard (try? FileManager.default.copyItem(at: bundled, to: installed)) != nil else { return nil }
+        }
+        return installed.path
     }
 }
 
