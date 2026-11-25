@@ -51,9 +51,9 @@ final class TerminalSession: ObservableObject {
     private func banner() {
         feedText("iDesk Terminal\r\n\r\n")
         if LocalShell.session != nil {
-            feedText("  1. Local   lanjutkan sesi Alpine yang masih berjalan\r\n")
+            feedText("  1. Local   resume the Alpine session already running\r\n")
             feedText("  2. SSH     your PC, server or WSL (full speed)\r\n")
-            feedText("  R. Reset   matikan sesi local yang nyangkut, boot baru\r\n\r\n")
+            feedText("  R. Reset   kill the stuck local session and boot fresh\r\n\r\n")
             feedText("Type 1, 2 or R: ")
         } else {
             feedText("  1. Local   Alpine Linux on this device (slower, works offline)\r\n")
@@ -242,18 +242,18 @@ final class TerminalSession: ObservableObject {
             DispatchQueue.main.async { self.updateSize() }  // SIGWINCH: redraw at this window's size
             return
         }
-        feedText("\r\n\u{1B}[1mLocal mode.\u{1B}[0m Menyiapkan Alpine Linux...\r\n")
+        feedText("\r\n\u{1B}[1mLocal mode.\u{1B}[0m Preparing Alpine Linux...\r\n")
         stage = .connecting
         Thread.detachNewThread { [weak self] in
             let rootfs = LocalShell.installRootfs { pct in
                 DispatchQueue.main.async {
-                    self?.feedText("\rMenyalin sistem Alpine (hanya boot pertama)... \(pct)%   ")
+                    self?.feedText("\rCopying the Alpine system (first boot only)... \(pct)%   ")
                 }
             }
             DispatchQueue.main.async {
                 guard let self else { return }
                 guard let rootfs else {
-                    self.fail("Rootfs Alpine tidak ditemukan di bundle.")
+                    self.fail("The bundled Alpine rootfs is unusable: \(LocalShell.lastError)")
                     return
                 }
                 self.bootLocal(rootfs: rootfs)
@@ -293,7 +293,7 @@ final class TerminalSession: ObservableObject {
     private func resetLocal() {
         mode = .local
         stage = .connecting
-        feedText("\r\nMereset sesi local...\r\n")
+        feedText("\r\nResetting the local session...\r\n")
         let interrupt = "\u{3}"   // Ctrl-C: get back to the shell prompt if a program is running
         idesk_shell_input(interrupt, Int32(interrupt.utf8.count))
         let exitCmd = "exit\n"
@@ -307,7 +307,7 @@ final class TerminalSession: ObservableObject {
             return
         }
         guard attempts > 0 else {
-            fail("Reset gagal, mesin tidak merespons. Tutup window ini lalu coba lagi, atau restart aplikasi.")
+            fail("Reset failed: the engine is not responding. Close this window and try again, or restart the app.")
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
@@ -317,7 +317,7 @@ final class TerminalSession: ObservableObject {
 
     /// The kernel stopped (shell exited, or boot failed): tell the window that is showing it.
     private func localEngineEnded(_ err: Int32) {
-        fail(err < 0 ? "Local shell gagal boot (error \(-err))." : "Sesi local berakhir.")
+        fail(err < 0 ? "Local shell failed to boot (error \(-err))." : "Local session ended.")
     }
 
     // MARK: SSH
@@ -378,16 +378,46 @@ enum LocalShell {
     /// Where console bytes from the kernel go.
     static var output: (([UInt8]) -> Void)?
 
+    /// Why the last installRootfs call failed (for the on-screen error).
+    static private(set) var lastError = "unknown"
+
+    /// Where the bundled rootfs actually is. SwiftPM puts resources in a resource bundle, and
+    /// xtool's packaging drops that bundle's Info.plist, which makes Bundle.resourceURL come back
+    /// nil on device. Walk the real directories instead of trusting bundle metadata: the app
+    /// root, then any *.bundle subdirectory (iDeskPM_iDesk.bundle and friends).
+    static func bundledRootfs() -> URL? {
+        let fm = FileManager.default
+        var roots = [Bundle.main.bundleURL]
+        if let res = Bundle.main.resourceURL, !roots.contains(res) { roots.append(res) }
+        for root in roots {
+            let direct = root.appendingPathComponent("alpine-rootfs")
+            if fm.fileExists(atPath: direct.path) { return direct }
+            if let subs = try? fm.contentsOfDirectory(atPath: root.path) {
+                for sub in subs where sub.hasSuffix(".bundle") {
+                    let candidate = root.appendingPathComponent(sub).appendingPathComponent("alpine-rootfs")
+                    if fm.fileExists(atPath: candidate.path) { return candidate }
+                }
+            }
+        }
+        return nil
+    }
+
     /// The fakefs rootfs must be writable (meta.db changes as the guest touches files): copy the
     /// bundled Alpine tree to Application Support on first run. Returns its path. Copies file by
     /// file and reports percent so first boot shows progress instead of looking hung.
     static func installRootfs(progress: (Int) -> Void) -> String? {
-        guard let bundled = Bundle.module.resourceURL?.appendingPathComponent("alpine-rootfs") else { return nil }
+        guard let bundled = bundledRootfs() else {
+            lastError = "not found under \(Bundle.main.bundleURL.path) or its resource bundles"
+            return nil
+        }
         let fm = FileManager.default
         let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let installed = support.appendingPathComponent("alpine-rootfs")
         if fm.fileExists(atPath: installed.path) { return installed.path }
-        guard let items = fm.enumerator(at: bundled, includingPropertiesForKeys: nil)?.allObjects as? [URL] else { return nil }
+        guard let items = fm.enumerator(at: bundled, includingPropertiesForKeys: nil)?.allObjects as? [URL] else {
+            lastError = "could not enumerate \(bundled.path)"
+            return nil
+        }
         let total = max(items.count, 1)
         do {
             try fm.createDirectory(at: installed, withIntermediateDirectories: true)
@@ -407,6 +437,7 @@ enum LocalShell {
             return installed.path
         } catch {
             try? fm.removeItem(at: installed)
+            lastError = "copy failed: \(error.localizedDescription)"
             return nil
         }
     }
