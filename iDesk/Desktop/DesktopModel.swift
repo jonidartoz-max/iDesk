@@ -12,8 +12,8 @@ enum Layout {
     static let addressBar: CGFloat = 38            // web windows: back, forward, reload, address field
     static let bookmarksBar: CGFloat = 30          // under it, when there are bookmarks (Browsing.showsBookmarksBar)
     static let taskbar: CGFloat = 48
-    static let resizeGrip: CGFloat = 22
-    static let edgeGrab: CGFloat = 10           // how far outside a window's edge it can still be grabbed to resize
+    static let resizeGrip: CGFloat = 36       // corner grab (finger-sized: the desktop runs scaled on the phone)
+    static let edgeGrab: CGFloat = 18          // how far outside a window's edge it can still be grabbed to resize
     static let minWindowSize = CGSize(width: 360, height: 260)
 
     // Title bar buttons (close / minimize / maximize), relative to the window frame.

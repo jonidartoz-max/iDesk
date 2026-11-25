@@ -207,6 +207,7 @@ enum FileStore {
         let state: [String: Any] = [
             "folder": folder, "items": items, "cut": clipboard.count,
             "trash": Trash.isInside(folder), "trashCount": Trash.count,
+            "hasLinux": linuxRoot != nil,
             "downloads": Downloads.shared.active.map { ["name": $0.name, "percent": $0.percent] },
         ]
         let data = (try? JSONSerialization.data(withJSONObject: state)) ?? Data("{}".utf8)
@@ -281,10 +282,21 @@ enum FileStore {
     private static let css = #"""
     :root { color-scheme: dark; }
     * { box-sizing: border-box; }
-    body { margin: 0; padding: 24px 30px 40px; background: #161618; color: #eee; font: 15px -apple-system, sans-serif; }
+    html, body { height: 100%; }
+    body { margin: 0; display: flex; background: #161618; color: #eee; font: 15px -apple-system, sans-serif; overflow: hidden; }
+    #root { display: flex; flex: 1; min-width: 0; }
+    #side { width: 196px; flex: 0 0 196px; background: #1d1d21; border-right: 1px solid #2c2c30; padding: 14px 10px; overflow-y: auto; }
+    #side .cap { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: #777; margin: 4px 8px 8px; }
+    #side .loc { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 7px; color: #ddd; font-size: 14px; }
+    #side .loc:hover { background: #2a2a2f; }
+    #side .loc.on { background: rgba(10, 132, 255, 0.4); color: #fff; }
+    #side .loc .ic { width: 20px; text-align: center; }
+    #side .loc .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #side .loc .cnt { color: #999; font-size: 12px; }
+    #main { flex: 1; min-width: 0; padding: 18px 24px 36px; overflow-y: auto; }
     h1 { font-size: 24px; margin: 0; }
     .sub { color: #999; margin: 4px 0 14px; font-size: 13px; }
-    .head { display: flex; align-items: flex-end; gap: 10px; }
+    .head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
     .grow { flex: 1; min-width: 0; }
     .bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
     .crumbs { display: flex; align-items: center; gap: 4px; font-size: 14px; min-width: 0; flex-wrap: wrap; }
@@ -293,7 +305,7 @@ enum FileStore {
     .crumbs span { color: #666; }
     input { background: #26262a; color: #eee; border: 1px solid #3a3a40; border-radius: 7px; padding: 7px 10px; font: inherit; font-size: 13px; }
     input:focus { outline: none; border-color: #0a84ff; }
-    #q { width: 220px; }
+    #q { flex: 1; min-width: 120px; max-width: 260px; }
     button { background: #2c2c30; color: #eee; border: 0; border-radius: 7px; padding: 7px 11px; font: inherit; font-size: 13px; white-space: nowrap; }
     button:hover { background: #3a3a40; }
     button.on { background: #0a84ff; color: #fff; }
@@ -312,17 +324,31 @@ enum FileStore {
     .box.on { background: #0a84ff; border-color: #0a84ff; position: relative; }
     .box.on::after { content: ''; position: absolute; left: 5px; top: 1px; width: 5px; height: 10px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
     .icon { font-size: 24px; width: 40px; text-align: center; }
-    .name { color: #8ab4ff; font-weight: 500; word-break: break-all; }
+    .name { color: #8ab4ff; font-weight: 500; overflow-wrap: anywhere; }
     .name.dir { color: #eee; }
     .meta { color: #888; font-size: 12px; margin-top: 3px; }
     .actions { text-align: right; white-space: nowrap; }
     .actions button { margin-left: 6px; }
     .empty { color: #999; margin-top: 40px; text-align: center; }
+    .empty .big { font-size: 44px; margin-bottom: 10px; }
+    .empty .sub { margin: 8px auto 0; max-width: 420px; }
     h3.found { font-size: 14px; color: #aaa; margin: 22px 0 6px; font-weight: 600; }
     .selbar { display: flex; align-items: center; gap: 8px; background: #1f2a3a; border-radius: 9px; padding: 7px 10px; margin-bottom: 10px; }
     .dl { background: #222226; border-radius: 9px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px; }
     .dl .track { height: 4px; background: #333; border-radius: 2px; margin-top: 6px; overflow: hidden; }
     .dl .fill { height: 100%; background: #0a84ff; }
+    @media (max-width: 700px) {
+      #side { width: 148px; flex-basis: 148px; padding: 12px 8px; }
+      #side .loc { font-size: 13px; padding: 7px 8px; }
+      #main { padding: 14px 12px 28px; }
+      table, tbody, tr { display: block; }
+      tr { padding: 8px 4px; }
+      td { display: block; padding: 1px 4px; }
+      td.check, td.icon { display: inline-block; width: auto; vertical-align: middle; padding: 2px 4px; }
+      td.icon + td { display: inline-block; width: calc(100% - 92px); vertical-align: middle; }
+      td.actions { text-align: left; margin-top: 4px; white-space: normal; }
+      .actions button { margin: 0 6px 4px 0; }
+    }
     """#
 
     private static let script = #"""
@@ -348,17 +374,21 @@ enum FileStore {
     function draw() {
       const root = document.getElementById('root');
       const keepQ = document.activeElement && document.activeElement.id === 'q';
-      let h = S.trash
+      const parts = S.folder && !S.trash ? S.folder.split('/') : [];
+      const inLinux = S.folder === 'Linux' || S.folder.startsWith('Linux/');
+      let h = `<div id="side"><div class="cap">Locations</div>`
+        + loc('', '📁', T.title, !S.trash && !inLinux, 0);
+      if (S.hasLinux) h += loc('Linux', '🐧', 'Linux', !S.trash && inLinux, 0);
+      h += `<div class="cap">System</div>`
+        + loc('.Trash', '🗑️', T.trash, S.trash, S.trashCount)
+        + `</div><div id="main">`;
+      h += S.trash
         ? `<div class="head"><div class="grow"><h1>🗑️ ${esc(T.trash)}</h1><div class="sub">${esc(T.trashSub)}</div></div>
-           <button onclick="go('')">← ${esc(T.title)}</button>
            <button class="danger" onclick="del(this, null)">${esc(T.emptyTrash)}</button></div>`
-        : `<div class="head"><div class="grow"><h1>${esc(T.title)}</h1><div class="sub">${esc(T.sub)}</div></div>
-        <button onclick="go('.Trash')">🗑️ ${esc(T.trash)}${S.trashCount ? ' (' + S.trashCount + ')' : ''}</button>
+        : `<div class="head"><div class="grow"><h1>${esc(parts.length ? parts[parts.length - 1] : T.title)}</h1></div>
         <button onclick="startNew('file')">${esc(T.newFile)}</button>
         <button onclick="startNew('folder')">${esc(T.newFolder)}</button>
         <button class="primary" onclick="post('import')">${esc(T.import)}</button></div>`;
-      // Breadcrumbs, search, sort.
-      const parts = S.folder && !S.trash ? S.folder.split('/') : [];
       h += `<div class="bar"><div class="crumbs grow">`;
       if (parts.length) h += `<button onclick="go('${jsq(parts.slice(0, -1).join('/'))}')">↑ ${esc(T.up)}</button>`;
       h += `<a onclick="go('')">${esc(T.title)}</a>`;
@@ -370,7 +400,7 @@ enum FileStore {
       S.downloads.forEach(d => {
         h += `<div class="dl">${esc(T.downloading)} ${esc(d.name)} — ${d.percent}%<div class="track"><div class="fill" style="width:${d.percent}%"></div></div></div>`;
       });
-      h += `<div id="selbar"></div><div id="list"></div>`;
+      h += `<div id="selbar"></div><div id="list"></div></div>`;
       root.innerHTML = h;
       drawList();
       if (keepQ) { const q = document.getElementById('q'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
@@ -425,7 +455,10 @@ enum FileStore {
           `<button class="danger" onclick="del(this, ['${jsq(i.path)}'])">${esc(T.delete)}</button></td></tr>`;
       });
       let html = r ? `<table>${r}</table>` : '';
-      if (!list.length && !(editing && editing.kind === 'new')) html = `<p class="empty">${esc(S.items.length ? T.noMatch : S.trash ? T.trashEmpty : T.empty)}</p>`;
+      if (!list.length && !(editing && editing.kind === 'new')) {
+        const first = S.items.length ? '' : `<p class="sub">${esc(S.trash ? T.trashSub : T.sub)}</p>`;
+        html = `<div class="empty"><div class="big">${S.trash ? '🗑️' : '📂'}</div><p>${esc(S.items.length ? T.noMatch : S.trash ? T.trashEmpty : T.empty)}</p>${first}</div>`;
+      }
       if (contents.length && query.trim()) {
         html += `<h3 class="found">${esc(T.inContents)}</h3><table>` + contents.map(c =>
           `<tr data-path="${esc(c.path)}"><td class="check"></td><td class="icon">📝</td><td><div class="name">${esc(c.path)}</div>
@@ -438,6 +471,9 @@ enum FileStore {
         const dot = edit.value.lastIndexOf('.');
         edit.setSelectionRange(0, dot > 0 ? dot : edit.value.length);
       }
+    }
+    function loc(folder, ic, name, on, cnt) {
+      return `<div class="loc ${on ? 'on' : ''}" onclick="go('${jsq(folder)}')"><span class="ic">${ic}</span><span class="n">${esc(name)}</span>${cnt ? `<span class="cnt">${cnt}</span>` : ''}</div>`;
     }
     function jsq(s) { return esc(String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'")); }
     function go(folder) { editing = null; contents = []; post('go', { folder: folder }); }
