@@ -1,4 +1,5 @@
 import UIKit
+import WebKit
 import SwiftUI
 import Combine
 
