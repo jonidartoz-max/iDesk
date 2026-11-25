@@ -2114,6 +2114,10 @@ final class DesktopModel: ObservableObject {
             return
         }
         if let w = topWindow(at: p) {
+            if let gk = guestKeyboardWindow, w.guestWindow != gk {
+                guestKeyboardWindow = nil
+                NotificationCenter.default.post(name: .iDeskTypingFocus, object: false)
+            }
             selectedIcon = nil
             focus(w)
             let f = w.frame
@@ -2149,6 +2153,10 @@ final class DesktopModel: ObservableObject {
 
         if let k = widget(at: p) { focusedID = nil; clickWidget(k, at: p); return }
         // Desktop background: click selects an icon, double click opens it.
+        if guestKeyboardWindow != nil {
+            guestKeyboardWindow = nil
+            NotificationCenter.default.post(name: .iDeskTypingFocus, object: false)
+        }
         focusedID = nil
         if let hit = desktopIcon(at: p) {
             if isDouble && selectedIcon == hit.slot {
@@ -2183,6 +2191,27 @@ final class DesktopModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + hold) { [weak self] in
             guard let self, !self.isGuestDrag else { return }
             GuestTouch.end()
+            self.refreshGuestKeyboard(guest, after: 0.3)
+        }
+    }
+
+    /// The guest window whose text field opened the keyboard, so taps elsewhere close it again.
+    private var guestKeyboardWindow: UIWindow?
+
+    /// Auto keyboard for guest apps: a forwarded tap that lands in a text field opens the iPhone
+    /// keyboard; one that lands elsewhere (or a Return that resigns the field) closes it. The guest
+    /// window itself can never become key — iDesk's key capture keeps the keyboard, like always.
+    private func refreshGuestKeyboard(_ guest: UIWindow, after delay: TimeInterval = 0) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            let hasInput = GuestTouch.keyInputInWindow(guest) != nil
+            if hasInput {
+                self.guestKeyboardWindow = guest
+                NotificationCenter.default.post(name: .iDeskTypingFocus, object: true)
+            } else if self.guestKeyboardWindow == guest {
+                self.guestKeyboardWindow = nil
+                NotificationCenter.default.post(name: .iDeskTypingFocus, object: false)
+            }
         }
     }
 
@@ -2842,7 +2871,10 @@ final class DesktopModel: ObservableObject {
         }
         if let w = focused, w.findQuery != nil { w.runFind(step: 1); return }      // Enter: the next match
         if let w = editingAddress { commitAddress(w); return }
-        if let guest = focused?.guestWindow { Self.inAppWindows(of: guest) { GuestTouch.insertText("\n", in: $0) } }
+        if let guest = focused?.guestWindow {
+            Self.inAppWindows(of: guest) { GuestTouch.insertText("\n", in: $0) }
+            refreshGuestKeyboard(guest, after: 0.3)
+        }
         else if let web = focused?.webView { WebInput.enter(web) }
     }
 
