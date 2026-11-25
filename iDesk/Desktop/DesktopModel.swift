@@ -2886,9 +2886,19 @@ final class DesktopModel: ObservableObject {
 
     /// Types into the app or page in front.
     private func send(_ s: String) {
-        if let term = focused?.terminal { term.sendText(s) }
+        if let term = focused?.terminal { TerminalMods.send(s, to: term) }   // sticky bar modifiers apply
         else if let guest = focused?.guestWindow { Self.inAppWindows(of: guest) { GuestTouch.insertText(s, in: $0) } }
         else if let web = focused?.webView { WebInput.type(web, text: s) }
+    }
+
+    /// The terminal key bar: a special key (arrows, Esc, Tab, F1-F12…) to the focused terminal.
+    func terminalKey(_ name: String) {
+        focused?.terminal?.keySpecial(name)
+    }
+
+    /// The terminal key bar: a printable key the phone keyboard lacks (|, `, ~) to the terminal.
+    func terminalText(_ s: String) {
+        if let term = focused?.terminal { TerminalMods.send(s, to: term) }
     }
     func backspace() {
         if isLocked || showScreenSaver { noteInput(); return }

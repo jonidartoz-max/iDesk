@@ -1,5 +1,6 @@
 import UIKit
 import SwiftUI
+import Combine
 import SwiftTerm
 import Citadel
 import NIOCore
@@ -185,6 +186,19 @@ final class TerminalSession: ObservableObject {
         case "Delete": write("\u{1b}[3~")
         case "PageUp": write("\u{1b}[5~")
         case "PageDown": write("\u{1b}[6~")
+        case "ShiftTab": write("\u{1b}[Z")
+        case "F1": write("\u{1b}OP")
+        case "F2": write("\u{1b}OQ")
+        case "F3": write("\u{1b}OR")
+        case "F4": write("\u{1b}OS")
+        case "F5": write("\u{1b}[15~")
+        case "F6": write("\u{1b}[17~")
+        case "F7": write("\u{1b}[18~")
+        case "F8": write("\u{1b}[19~")
+        case "F9": write("\u{1b}[20~")
+        case "F10": write("\u{1b}[21~")
+        case "F11": write("\u{1b}[23~")
+        case "F12": write("\u{1b}[24~")
         default: break
         }
     }
@@ -219,12 +233,14 @@ final class TerminalSession: ObservableObject {
         if mode == .local, t.cols != lastCols || t.rows != lastRows {
             lastCols = t.cols
             lastRows = t.rows
-            idesk_shell_resize(Int32(t.cols), Int32(t.rows))
+            idesk_shell_resize(Int32(t.cols), Int32(t.rows))   // SIGWINCH: TUI apps redraw
+            displayView.setNeedsDisplay(displayView.bounds)    // full repaint, not just damage
             return
         }
         guard let stdin, t.cols != lastCols || t.rows != lastRows else { return }
         lastCols = t.cols
         lastRows = t.rows
+        displayView.setNeedsDisplay(displayView.bounds)
         Task { try? await stdin.changeSize(cols: t.cols, rows: t.rows, pixelWidth: 0, pixelHeight: 0) }
     }
 
@@ -443,14 +459,193 @@ enum LocalShell {
     }
 }
 
+// MARK: - On-screen terminal key bar
+
+/// Sticky modifiers shared by the key bar and the ordinary typing path: tap Ctrl on the bar,
+/// then type c on the iPhone keyboard, and the terminal gets the control byte (0x03). One-shot:
+/// a modifier releases after the next key. Alt sends the ESC prefix, like a PC's Meta key.
+enum TerminalMods {
+    static let changed = Notification.Name("iDeskTerminalModsChanged")
+    static var ctrl = false { didSet { NotificationCenter.default.post(name: changed, object: nil) } }
+    static var alt = false { didSet { NotificationCenter.default.post(name: changed, object: nil) } }
+    static var shift = false { didSet { NotificationCenter.default.post(name: changed, object: nil) } }
+
+    static func reset() { ctrl = false; alt = false; shift = false }
+
+    /// Sends typed text to a terminal with the sticky modifiers applied.
+    static func send(_ s: String, to term: TerminalSession) {
+        let c = ctrl, a = alt, sh = shift
+        reset()
+        guard c || a || sh else { term.sendText(s); return }
+        var out = ""
+        for ch in s {
+            if c, let v = ch.uppercased().first?.asciiValue, v >= 64, v <= 95 {
+                if a { out.append("\u{1b}") }
+                out.append(String(bytes: [v - 64], encoding: .utf8) ?? "")
+            } else {
+                if a { out.append("\u{1b}") }
+                out.append(sh ? String(ch).uppercased() : String(ch))
+            }
+        }
+        term.sendText(out)
+    }
+}
+
+/// The PC-keyboard bar above the iPhone keyboard while a terminal window is focused: Esc, Tab,
+/// sticky Ctrl / Alt / Shift, arrows, editing keys, and an Fn page with F1-F12 — the keys the
+/// phone keyboard does not have. Each key injects the bytes the shell expects, in both Local
+/// and SSH mode (they share the same session input path).
+final class TerminalKeyBar: UIView {
+    private let model: DesktopModel
+    private var watcher: AnyCancellable?
+    private var modWatcher: NSObjectProtocol?
+    private var showFn = false
+    private let stack = UIStackView()
+    private var modButtons: [UIButton] = []
+    /// Set by KeyCaptureView: whether the on-screen keyboard is up.
+    var keyboardShown = false { didSet { refresh() } }
+    /// Fires when the bar should appear or disappear (focus or keyboard change).
+    var onVisibilityChange: () -> Void = {}
+    private var wasVisible = false
+
+    init(model: DesktopModel) {
+        self.model = model
+        super.init(frame: CGRect(x: 0, y: 0, width: 100, height: 46))
+        backgroundColor = UIColor(white: 0.13, alpha: 1)
+        let scroll = UIScrollView()
+        scroll.showsHorizontalScrollIndicator = false
+        scroll.frame = bounds.insetBy(dx: 8, dy: 6)
+        scroll.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        stack.axis = .horizontal
+        stack.spacing = 8
+        stack.alignment = .center
+        scroll.addSubview(stack)
+        addSubview(scroll)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+            stack.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor),
+        ])
+        watcher = model.$focusedID.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.refresh() }
+        modWatcher = NotificationCenter.default.addObserver(forName: TerminalMods.changed, object: nil,
+                                                            queue: .main) { [weak self] _ in self?.syncMods() }
+        rebuild()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    deinit { if let modWatcher { NotificationCenter.default.removeObserver(modWatcher) } }
+
+    /// Visible only while the keyboard is up and the focused window is a terminal.
+    var shouldShow: Bool { keyboardShown && model.focused?.terminal != nil }
+    private func refresh() {
+        let v = shouldShow
+        if v != wasVisible { wasVisible = v; onVisibilityChange() }
+    }
+
+    @discardableResult
+    private func addKey(_ title: String, action: @escaping () -> Void) -> UIButton {
+        let b = UIButton(type: .system)
+        b.setTitle(title, for: .normal)
+        b.setTitleColor(.white, for: .normal)
+        b.titleLabel?.font = UIFont.monospacedSystemFont(ofSize: 14, weight: .medium)
+        b.backgroundColor = UIColor(white: 0.28, alpha: 1)
+        b.layer.cornerRadius = 6
+        b.widthAnchor.constraint(greaterThanOrEqualToConstant: 38).isActive = true
+        b.contentEdgeInsets = UIEdgeInsets(top: 4, left: 10, bottom: 4, right: 10)
+        b.addAction(UIAction { _ in action() }, for: .touchUpInside)
+        stack.addArrangedSubview(b)
+        return b
+    }
+
+    private func addMod(_ title: String, _ get: @escaping () -> Bool, _ set: @escaping (Bool) -> Void) {
+        let b = addKey(title) { [weak self] in set(!get()); self?.syncMods() }
+        b.tag = modButtons.count   // 0 = Ctrl, 1 = Alt, 2 = Shift
+        modButtons.append(b)
+    }
+
+    private func syncMods() {
+        let on = [TerminalMods.ctrl, TerminalMods.alt, TerminalMods.shift]
+        for (i, b) in modButtons.enumerated() where i < on.count {
+            b.backgroundColor = on[i] ? .systemBlue : UIColor(white: 0.28, alpha: 1)
+        }
+    }
+
+    private func rebuild() {
+        modButtons = []
+        stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        if showFn {
+            addKey("\u{2039}") { [weak self] in self?.showFn = false; self?.rebuild() }
+            for i in 1...12 {
+                let name = "F\(i)"
+                addKey(name) { [weak self] in self?.key(name) }
+            }
+            return
+        }
+        addKey("Esc") { [weak self] in self?.key("Escape") }
+        addMod("Ctrl", { TerminalMods.ctrl }, { TerminalMods.ctrl = $0 })
+        addMod("Alt", { TerminalMods.alt }, { TerminalMods.alt = $0 })
+        addMod("Shift", { TerminalMods.shift }, { TerminalMods.shift = $0 })
+        addKey("Tab") { [weak self] in self?.key("Tab") }
+        addKey("\u{2190}") { [weak self] in self?.key("ArrowLeft") }
+        addKey("\u{2191}") { [weak self] in self?.key("ArrowUp") }
+        addKey("\u{2193}") { [weak self] in self?.key("ArrowDown") }
+        addKey("\u{2192}") { [weak self] in self?.key("ArrowRight") }
+        addKey("Home") { [weak self] in self?.key("Home") }
+        addKey("End") { [weak self] in self?.key("End") }
+        addKey("PgUp") { [weak self] in self?.key("PageUp") }
+        addKey("PgDn") { [weak self] in self?.key("PageDown") }
+        addKey("Del") { [weak self] in self?.key("Delete") }
+        addKey("|") { [weak self] in self?.text("|") }
+        addKey("`") { [weak self] in self?.text("`") }
+        addKey("~") { [weak self] in self?.text("~") }
+        addKey("Fn") { [weak self] in self?.showFn = true; self?.rebuild() }
+        syncMods()
+    }
+
+    private func key(_ name: String) {
+        if name == "Tab", TerminalMods.shift { model.terminalKey("ShiftTab") }
+        else { model.terminalKey(name) }
+        TerminalMods.reset()   // one-shot: a special key consumes the modifiers too
+    }
+    private func text(_ s: String) { model.terminalText(s) }
+}
+
 /// Hosts the terminal view inside a desktop window. Touches stay with iDesk's shield: the terminal
-/// never handles them, it only draws.
+/// never handles them, it only draws. The container lets a reattached local session swap the old
+/// session's live view in for this window's fresh one (resume), and forwards real layout resizes
+/// to the session so the engine gets SIGWINCH exactly when the pixels change.
+final class TerminalContainer: UIView {
+    var onLayout: () -> Void = {}
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        onLayout()
+    }
+}
+
 struct TerminalHost: UIViewRepresentable {
     @ObservedObject var session: TerminalSession
 
-    func makeUIView(context: Context) -> TerminalView { session.displayView }
+    func makeUIView(context: Context) -> UIView {
+        let container = TerminalContainer()
+        container.backgroundColor = UIColor(white: 0.08, alpha: 1)
+        container.onLayout = { [weak session] in session?.updateSize() }
+        embed(session.displayView, in: container)
+        return container
+    }
 
-    func updateUIView(_ view: TerminalView, context: Context) {
+    func updateUIView(_ container: UIView, context: Context) {
+        if container.subviews.first != session.displayView {
+            container.subviews.forEach { $0.removeFromSuperview() }
+            embed(session.displayView, in: container)
+        }
         session.updateSize()
+    }
+
+    private func embed(_ v: TerminalView, in container: UIView) {
+        v.frame = container.bounds
+        v.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        container.addSubview(v)
     }
 }

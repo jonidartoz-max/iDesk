@@ -71,8 +71,9 @@ void idesk_shell_resize(int cols, int rows) {
     if (tty == NULL)
         return;
     lock(&tty->lock);
-    tty->winsize.col = cols;
-    tty->winsize.row = rows;
+    struct winsize_ ws = { .row = rows, .col = cols };
+    // tty_set_winsize also sends SIGWINCH to the foreground process group, so TUI apps redraw.
+    tty_set_winsize(tty, ws);
     unlock(&tty->lock);
 }
 
