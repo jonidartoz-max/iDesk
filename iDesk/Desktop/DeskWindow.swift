@@ -11,6 +11,8 @@ final class DeskWindow: NSObject, ObservableObject, Identifiable, WKUIDelegate, 
         case system(DesktopPage)
         /// An iOS app from an IPA.
         case guest
+        /// An SSH terminal (TerminalApp.swift).
+        case terminal
     }
 
     let id = UUID()
@@ -33,6 +35,7 @@ final class DeskWindow: NSObject, ObservableObject, Identifiable, WKUIDelegate, 
         case .browser: return "globe"
         case let .system(page): return page.symbol
         case .guest: return "app.fill"
+        case .terminal: return "apple.terminal.fill"
         }
     }
     @Published var frame: CGRect
@@ -52,6 +55,8 @@ final class DeskWindow: NSObject, ObservableObject, Identifiable, WKUIDelegate, 
     let initialURL: URL
     let guestApp: GuestApp?         // window of an app installed from an IPA
     let guestWindow: UIWindow?
+    /// The SSH session of a terminal window.
+    let terminal: TerminalSession?
     var isApp: Bool { guestWindow != nil }
     var onChange: (() -> Void)?
     /// The last tab closed itself: the desktop closes the window.
@@ -237,9 +242,24 @@ final class DeskWindow: NSObject, ObservableObject, Identifiable, WKUIDelegate, 
         self.initialURL = app.bundleURL
         self.guestApp = app
         self.guestWindow = window
+        self.terminal = nil
         self.kind = .guest
         super.init()
         title = app.name
+    }
+
+    /// A terminal window: an SSH session (TerminalApp.swift).
+    init(terminalSession frame: CGRect) {
+        self.frame = frame
+        self.initialURL = URL(string: "idesk://terminal")!
+        self.guestApp = nil
+        self.guestWindow = nil
+        self.kind = .terminal
+        self.terminal = TerminalSession()
+        super.init()
+        title = String(localized: "Terminal")
+        fullscreenBridge.window = self
+        filesBridge.window = self
     }
 
     /// A browser window, or the window of one of iDesk's own apps when `url` is one of its pages (idesk://settings…)
@@ -249,6 +269,7 @@ final class DeskWindow: NSObject, ObservableObject, Identifiable, WKUIDelegate, 
         self.initialURL = url
         self.guestApp = nil
         self.guestWindow = nil
+        self.terminal = nil
         self.kind = system ? DesktopPage(url).map(Kind.system) ?? .browser : .browser
         super.init()
         if let page = systemPage { title = page.windowTitle(for: url) }

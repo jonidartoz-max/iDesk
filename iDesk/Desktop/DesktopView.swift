@@ -338,6 +338,9 @@ private struct WindowView: View {
             }
             if let guest = window.guestWindow {
                 GuestWindowHost(guest: guest, hidden: !window.isShown, area: window.guestRect) { on in window.onFullscreen?(on) }
+            } else if let term = window.terminal {
+                TerminalHost(session: term)                     // touches stay with the shield
+                    .allowsHitTesting(false)
             } else if let web = window.webView {
                 WebViewHost(webView: web).id(ObjectIdentifier(web))     // another tab: another web view
                     .overlay(alignment: .topTrailing) {

@@ -228,10 +228,13 @@ final class DesktopModel: ObservableObject {
         Shortcut(name: String(localized: "Files"), symbol: "folder.fill", url: DesktopPage.files.url.absoluteString, hue: 0.57),
         Shortcut(name: String(localized: "Settings"), symbol: "gearshape.fill", url: DesktopPage.settings.url.absoluteString, hue: 0.0),
         Shortcut(name: String(localized: "Calendar"), symbol: "calendar", url: DesktopPage.calendar.url.absoluteString, hue: 0.05),
+        Shortcut(name: String(localized: "Terminal"), symbol: "apple.terminal.fill", url: "idesk://terminal", hue: 0.35),
         Shortcut(name: String(localized: "Trash"), symbol: "trash.fill", url: trashURL, hue: 0.0),
     ]
     /// The Trash's desktop icon opens Files at the Trash (FilesExtras.swift).
     static let trashURL = "idesk-trash:"
+    /// The Terminal's address: opens an SSH terminal window (TerminalApp.swift).
+    static let terminalURL = "idesk://terminal"
 
     @Published var windows: [DeskWindow] = []      // order = stacking order (last = topmost)
     @Published var focusedID: UUID? {
@@ -604,7 +607,7 @@ final class DesktopModel: ObservableObject {
             return Shortcut(name: String(localized: "\(s.name) (web)"), symbol: s.symbol, url: s.url, hue: s.hue)
         }
         let links = browsing.desktopLinks.map { Shortcut(name: $0.title, symbol: "globe", url: $0.url, hue: Self.hue(for: $0.url)) }
-        func isOwn(_ s: Shortcut) -> Bool { DesktopPage(URL(string: s.url)) != nil || s.url == Self.trashURL }
+        func isOwn(_ s: Shortcut) -> Bool { DesktopPage(URL(string: s.url)) != nil || s.url == Self.trashURL || s.url == Self.terminalURL }
         let own = builtIn.filter(isOwn), web = builtIn.filter { !isOwn($0) }
         let webApps = WebApps.shared.all.map { Shortcut(name: $0.title, symbol: "app.badge", url: $0.url, hue: Self.hue(for: $0.url), webApp: true) }
         return web + links + webApps + own + apps.map { Shortcut(name: $0.name, symbol: "app.fill", url: "", hue: 0.5, app: $0) }
@@ -621,6 +624,7 @@ final class DesktopModel: ObservableObject {
         if let app = item.app { openApp(app) }
         else if let file = item.file { openFile(file) }
         else if item.url == Self.trashURL { openFile(Trash.folder) }
+        else if item.url == Self.terminalURL { openTerminal() }
         else if item.webApp { openWebApp(item.url) }
         else { openWindow(item.url) }
     }
@@ -1013,6 +1017,21 @@ final class DesktopModel: ObservableObject {
     // MARK: Windows
 
     func openWindow(_ string: String) { openWindow(Self.url(from: string)) }
+
+    /// The Terminal: an SSH session in its own window (TerminalApp.swift).
+    func openTerminal() {
+        guard isExternalConnected else { return }
+        guard canOpenAnother() else { return }
+        let area = desktopArea
+        let size = CGSize(width: min(720, area.width - 16), height: min(440, area.height - 16))
+        let step = CGFloat(windows.count % 8) * 32
+        let origin = CGPoint(x: max(0, (area.width - size.width) / 2 - 96 + step),
+                             y: max(0, (area.height - size.height) / 2 - 48 + step))
+        let w = DeskWindow(terminalSession: CGRect(origin: origin, size: size))
+        add(w)
+        focusedID = w.id
+        scheduleSave()
+    }
 
     func openWindow(_ url: URL, webApp: Bool = false) {
         // No external display means no desktop to put the window on: do not open it invisibly.
@@ -2857,7 +2876,8 @@ final class DesktopModel: ObservableObject {
 
     /// Types into the app or page in front.
     private func send(_ s: String) {
-        if let guest = focused?.guestWindow { Self.inAppWindows(of: guest) { GuestTouch.insertText(s, in: $0) } }
+        if let term = focused?.terminal { term.sendText(s) }
+        else if let guest = focused?.guestWindow { Self.inAppWindows(of: guest) { GuestTouch.insertText(s, in: $0) } }
         else if let web = focused?.webView { WebInput.type(web, text: s) }
     }
     func backspace() {
@@ -2883,7 +2903,8 @@ final class DesktopModel: ObservableObject {
             return
         }
         if let w = editingAddress { if w.addressDraft?.isEmpty == false { w.addressDraft?.removeLast() }; return }
-        if let guest = focused?.guestWindow { Self.inAppWindows(of: guest) { GuestTouch.deleteBackward(in: $0) } }
+        if let term = focused?.terminal { term.keyBackspace() }
+        else if let guest = focused?.guestWindow { Self.inAppWindows(of: guest) { GuestTouch.deleteBackward(in: $0) } }
         else if let web = focused?.webView { WebInput.backspace(web) }
     }
     func pressEnter() {
@@ -2899,6 +2920,7 @@ final class DesktopModel: ObservableObject {
         }
         if let w = focused, w.findQuery != nil { w.runFind(step: 1); return }      // Enter: the next match
         if let w = editingAddress { commitAddress(w); return }
+        if let term = focused?.terminal { term.keyEnter(); return }
         if let guest = focused?.guestWindow {
             Self.inAppWindows(of: guest) { GuestTouch.insertText("\n", in: $0) }
             refreshGuestKeyboard(guest, after: 0.3)
@@ -2979,6 +3001,7 @@ final class DesktopModel: ObservableObject {
             return
         }
         if editingSticky != nil { return }
+        if let term = focused?.terminal { term.keySpecial(key); return }
         if let web = focused?.webView { WebInput.key(web, key: key, keyCode: code, shift: shift) }
     }
     func selectAll() {
@@ -3426,7 +3449,8 @@ final class DesktopModel: ObservableObject {
         saveWork?.cancel()
         windows.filter(\.isApp).forEach(rememberFrame)
         // Guest app windows are not saved: a crashing app would take iDesk down on every launch.
-        let saved = windows.filter { !$0.isApp }.map { w -> SavedWindow in
+        // Terminal windows are not saved either: an SSH session cannot resume, they open fresh.
+        let saved = windows.filter { !$0.isApp && $0.terminal == nil }.map { w -> SavedWindow in
             let current = w.fullscreenRestore?.frame ?? w.frame
             let f = (w.isMaximized || w.isSnapped) ? (w.restoreFrame ?? current) : current
             return SavedWindow(url: w.currentURL.absoluteString, x: f.minX, y: f.minY, w: f.width, h: f.height,
