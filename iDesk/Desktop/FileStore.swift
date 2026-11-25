@@ -8,12 +8,43 @@ enum FileStore {
     private static let pageName = ".iDesk-files.html"
 
     /// A file in Files saved with an older path: the app's data folder gets a new name when iDesk is reinstalled or
-    /// updated, so a file URL kept with the session points to the same file under the current Downloads folder.
+    /// updated (zContainer repackages it too), so a file URL kept with the session points to the same file under the
+    /// current Downloads or Linux folder.
     static func current(_ url: URL) -> URL {
         guard url.isFileURL else { return url }
-        let path = url.standardizedFileURL.path, marker = "/Documents/Downloads/"
-        guard let range = path.range(of: marker), !FileManager.default.fileExists(atPath: path) else { return url }
-        return downloads.appendingPathComponent(String(path[range.upperBound...]))
+        let path = url.standardizedFileURL.path
+        guard !FileManager.default.fileExists(atPath: path) else { return url }
+        if let range = path.range(of: "/Documents/Downloads/") {
+            return downloads.appendingPathComponent(String(path[range.upperBound...]))
+        }
+        if let range = path.range(of: "/Application Support/alpine-rootfs/") {
+            let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("alpine-rootfs", isDirectory: true)
+            return base.appendingPathComponent(String(path[range.upperBound...]))
+        }
+        return url
+    }
+
+    /// The "Linux" location: the whole Alpine filesystem (the fakefs data tree of the embedded
+    /// terminal), like a second drive in My Computer. Present once the local shell has booted
+    /// once — booting is what copies the rootfs here.
+    static let linuxName = "Linux"
+    static var linuxRoot: URL? {
+        let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("alpine-rootfs/data", isDirectory: true)
+        return isFolder(url) ? url : nil
+    }
+
+    /// The directory a web window may read when showing this file: the root that contains it
+    /// (Files' Downloads, or the Linux tree), nil for anywhere else.
+    static func readAccessRoot(for url: URL) -> URL? {
+        let path = url.standardizedFileURL.path
+        let dl = downloads.standardizedFileURL.path
+        if path == dl || path.hasPrefix(dl + "/") { return downloads }
+        if let linux = linuxRoot?.standardizedFileURL, path == linux.path || path.hasPrefix(linux.path + "/") {
+            return linux
+        }
+        return nil
     }
 
     static var downloads: URL {
@@ -46,18 +77,28 @@ enum FileStore {
 
     // MARK: Paths
 
-    /// A path inside Files ("Photos/trip.jpg"), as a file URL, if it stays inside Downloads.
+    /// A path inside Files ("Photos/trip.jpg", "Linux/etc/apk"), as a file URL, inside its root.
     static func resolve(_ relative: String) -> URL? {
         let parts = relative.split(separator: "/").map(String.init)
         guard !parts.contains(where: { $0 == ".." || $0 == "." }) else { return nil }
+        if parts.first == linuxName {
+            guard let root = linuxRoot?.standardizedFileURL else { return nil }
+            let url = parts.dropFirst().reduce(root) { $0.appendingPathComponent($1) }.standardizedFileURL
+            return url.path == root.path || url.path.hasPrefix(root.path + "/") ? url : nil
+        }
         let url = parts.reduce(downloads) { $0.appendingPathComponent($1) }.standardizedFileURL
         let root = downloads.standardizedFileURL.path
         return url.path == root || url.path.hasPrefix(root + "/") ? url : nil
     }
 
-    /// The path of a file inside Files ("Photos/trip.jpg"), or nil when it is not in Files.
+    /// The path of a file inside Files ("Photos/trip.jpg", "Linux/etc/apk"), or nil when it is not in Files.
     static func relativePath(of url: URL) -> String? {
-        let root = downloads.standardizedFileURL.path, path = url.standardizedFileURL.path
+        let path = url.standardizedFileURL.path
+        if let linux = linuxRoot?.standardizedFileURL.path, path == linux || path.hasPrefix(linux + "/") {
+            let rel = String(path.dropFirst(linux.count))
+            return rel.isEmpty ? linuxName : linuxName + rel
+        }
+        let root = downloads.standardizedFileURL.path
         guard path.hasPrefix(root + "/") else { return nil }
         return String(path.dropFirst(root.count + 1))
     }
@@ -74,18 +115,24 @@ enum FileStore {
         let isFolder: Bool
     }
 
-    /// What is in a folder of Files (not the hidden page file), newest first.
+    /// What is in a folder of Files (not the hidden page file), newest first. The Files root
+    /// also lists "Linux": the whole Alpine filesystem, when the local shell has booted once.
     static func items(in folder: String = "") -> [Item] {
         guard let dir = resolve(folder) else { return [] }
         let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey, .isDirectoryKey]
         let urls = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys,
                                                                  options: [.skipsHiddenFiles])) ?? []
-        return urls.map { url in
+        var list = urls.map { url in
             let v = try? url.resourceValues(forKeys: Set(keys))
             return Item(url: url, size: v?.fileSize ?? 0, date: v?.contentModificationDate ?? .distantPast,
                         isFolder: v?.isDirectory == true)
         }
         .sorted { $0.date > $1.date }
+        if folder.isEmpty, let linux = linuxRoot {
+            let v = try? linux.resourceValues(forKeys: [.contentModificationDateKey])
+            list.append(Item(url: linux, size: 0, date: v?.contentModificationDate ?? .now, isFolder: true))
+        }
+        return list
     }
 
     // MARK: Changes
@@ -141,16 +188,19 @@ enum FileStore {
 
     /// What a Files window shows: its folder's items, what was cut, downloads in progress (JSON for render()).
     static func state(folder: String) -> String {
+        let linux = linuxRoot?.standardizedFileURL
         let items: [[String: Any]] = items(in: folder).map { item in
-            let path = folder.isEmpty ? item.url.lastPathComponent : folder + "/" + item.url.lastPathComponent
+            let isLinuxRoot = folder.isEmpty && item.url.standardizedFileURL == linux
+            let name = isLinuxRoot ? linuxName : item.url.lastPathComponent
+            let path = folder.isEmpty ? name : folder + "/" + name
             return [
-                "name": item.url.lastPathComponent, "path": path, "dir": item.isFolder,
+                "name": name, "path": path, "dir": item.isFolder,
                 "bytes": item.size, "date": item.date.timeIntervalSince1970 * 1000,
                 "meta": item.isFolder ? dateFormatter.string(from: item.date)
                     : sizeFormatter.string(fromByteCount: Int64(item.size)) + " · " + dateFormatter.string(from: item.date),
-                "icon": item.isFolder ? "📁" : symbol(for: item.url.pathExtension),
-                "ipa": item.url.pathExtension.lowercased() == "ipa",
-                "zip": item.url.pathExtension.lowercased() == "zip",
+                "icon": isLinuxRoot ? "🐧" : item.isFolder ? "📁" : symbol(for: item.url.pathExtension),
+                "ipa": !isLinuxRoot && item.url.pathExtension.lowercased() == "ipa",
+                "zip": !isLinuxRoot && item.url.pathExtension.lowercased() == "zip",
                 "origin": Trash.isInside(folder) ? (Trash.origin(of: item.url.lastPathComponent) ?? "") : "",
             ]
         }
@@ -499,7 +549,8 @@ final class FilesBridge: NSObject, WKScriptMessageHandler {
             let files = paths.compactMap(FileStore.resolve).filter { !FileStore.isFolder($0) }
             if !files.isEmpty { model.shareOnPhone(files) }
         case "delete":
-            // From Files: to the Trash. From the Trash: gone for good.
+            // From Files: to the Trash. From the Trash: gone for good. The Linux root itself stays.
+            let paths = paths.filter { $0 != FileStore.linuxName }
             if Trash.isInside(window.filesFolder) {
                 Trash.deleteForever(paths)
             } else {
@@ -590,6 +641,7 @@ final class FilesBridge: NSObject, WKScriptMessageHandler {
             }
         case "rename":
             guard let path, let file = FileStore.resolve(path), file != FileStore.downloads.standardizedFileURL,
+                  path != FileStore.linuxName,
                   let name = (body["name"] as? String).flatMap(FileStore.cleanName), name != file.lastPathComponent else { return }
             let target = file.deletingLastPathComponent().appendingPathComponent(name)
             guard !FileManager.default.fileExists(atPath: target.path) else {
@@ -600,7 +652,7 @@ final class FilesBridge: NSObject, WKScriptMessageHandler {
             }
             model.refreshFilesPages()
         case "cut":
-            FileStore.clipboard = paths.filter { FileStore.resolve($0) != nil }
+            FileStore.clipboard = paths.filter { FileStore.resolve($0) != nil && $0 != FileStore.linuxName }
             model.refreshFilesPages()
         case "paste":
             guard let folder = FileStore.resolve(body["folder"] as? String ?? "") else { return }

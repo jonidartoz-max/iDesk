@@ -456,13 +456,14 @@ final class DeskWindow: NSObject, ObservableObject, Identifiable, WKUIDelegate, 
         let url = FileStore.current(url)
         if let page = DesktopPage(url) {
             page.load(in: webView, address: url)
-        } else if url.isFileURL, url.standardizedFileURL.path.hasPrefix(FileStore.downloads.standardizedFileURL.path) {
-            // A file from Files (opened from it, or restored with the session): WebKit needs read access to it.
-            // Text files are read as UTF-8 (WebKit would guess Latin-1 and garble accents and dashes).
+        } else if url.isFileURL, let root = FileStore.readAccessRoot(for: url) {
+            // A file from Files or Linux (opened from Files, or restored with the session): WebKit
+            // needs read access to its root. Text files are read as UTF-8 (WebKit would guess
+            // Latin-1 and garble accents and dashes).
             if QuickLook.kind(of: url) == .text, let data = try? Data(contentsOf: url) {
                 webView.load(data, mimeType: "text/plain", characterEncodingName: "utf-8", baseURL: url)
             } else {
-                webView.loadFileURL(url, allowingReadAccessTo: FileStore.downloads)
+                webView.loadFileURL(url, allowingReadAccessTo: root)
             }
         } else {
             webView.load(URLRequest(url: url))
