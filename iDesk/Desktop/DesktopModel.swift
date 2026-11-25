@@ -1286,7 +1286,9 @@ final class DesktopModel: ObservableObject {
 
     func minimize(_ w: DeskWindow) {
         Self.hapticTap()
-        w.isMinimized = true
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+            w.isMinimized = true
+        }
         minimizeStack.removeAll { $0 == w.id }
         minimizeStack.append(w.id)
         if focusedID == w.id { focusedID = windows.last(where: { $0.isShown })?.id }
@@ -1355,13 +1357,31 @@ final class DesktopModel: ObservableObject {
         case .began:
             widenArmed = false
             isWidenActive = false
-            if let w = topWindow(at: p) ?? focused, !w.isFullscreen {
+            desktopPinchArmed = false
+            if topWindow(at: p) == nil {
+                // Pinch on the empty desktop: the iPad "pinch to go Home" — in = every window
+                // away (Show Desktop), back out = bring them back.
+                desktopPinchArmed = true
+                widenID = nil
+            } else if let w = topWindow(at: p) ?? focused, !w.isFullscreen {
                 widenID = w.id
                 widenBegin = w.frame
             } else {
                 widenID = nil
             }
         case .changed:
+            if desktopPinchArmed {
+                if scale < 0.65, windows.contains(where: { $0.isShown }) {
+                    desktopPinchArmed = false
+                    Self.hapticTap()
+                    toggleShowDesktop()
+                } else if scale > 1.6, !hiddenByShowDesktop.isEmpty {
+                    desktopPinchArmed = false
+                    Self.hapticTap()
+                    toggleShowDesktop()
+                }
+                return
+            }
             guard let id = widenID, let w = window(id) else { return }
             if !widenArmed {
                 guard abs(scale - 1) > 0.07 else { return }
@@ -1398,8 +1418,12 @@ final class DesktopModel: ObservableObject {
             widenID = nil
             widenArmed = false
             isWidenActive = false
+            desktopPinchArmed = false
         }
     }
+
+    /// True while a two-finger pinch runs on the empty desktop (Show Desktop gesture).
+    private var desktopPinchArmed = false
 
     /// The window covers the whole external display (taskbar included) when the page requests fullscreen.
     func setFullscreen(_ w: DeskWindow, _ on: Bool) {
@@ -1446,16 +1470,18 @@ final class DesktopModel: ObservableObject {
 
     func toggleMaximize(_ w: DeskWindow) {
         Self.hapticTap()
-        if w.isMaximized {
-            w.frame = w.restoreFrame ?? w.frame
-            w.isMaximized = false
-        } else {
-            if !w.isSnapped { w.restoreFrame = w.frame }
-            w.frame = maximizedFrame
-            w.isMaximized = true
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            if w.isMaximized {
+                w.frame = w.restoreFrame ?? w.frame
+                w.isMaximized = false
+            } else {
+                if !w.isSnapped { w.restoreFrame = w.frame }
+                w.frame = maximizedFrame
+                w.isMaximized = true
+            }
+            w.isSnapped = false
+            w.snap = nil
         }
-        w.isSnapped = false
-        w.snap = nil
         scheduleSave()
     }
 
@@ -1465,11 +1491,13 @@ final class DesktopModel: ObservableObject {
             return
         }
         Self.hapticTap()
-        if !w.isMaximized && !w.isSnapped { w.restoreFrame = w.frame }
-        w.frame = snapRect(s)
-        w.isMaximized = false
-        w.isSnapped = true
-        w.snap = s
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            if !w.isMaximized && !w.isSnapped { w.restoreFrame = w.frame }
+            w.frame = snapRect(s)
+            w.isMaximized = false
+            w.isSnapped = true
+            w.snap = s
+        }
         scheduleSave()
     }
 

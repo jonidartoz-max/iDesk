@@ -355,6 +355,7 @@ private struct WindowView: View {
         )
         .shadow(color: .black.opacity(focused ? 0.5 : 0.25), radius: focused ? 24 : 10, y: 8)
         .offset(x: f.minX, y: f.minY)
+        .scaleEffect(window.isShown ? 1 : 0.85)
         .opacity(window.isShown ? 1 : 0)   // keep the web view alive while minimized or on another workspace
     }
 }

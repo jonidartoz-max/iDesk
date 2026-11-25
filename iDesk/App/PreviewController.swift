@@ -214,21 +214,49 @@ final class PreviewController: UIViewController {
 
     private var panScrolled = false
     private var edgeStart: CGPoint = .zero
+    private var edgeWeb: WKWebView?
     /// Set on touch-down while the keyboard is open and the finger starts just above it:
     /// a downward drag from there dismisses the keyboard, like swiping it away.
     private var keyboardDragDismiss = false
 
+    /// Safari-style interactive edge swipe: the page follows the finger, springs back when the
+    /// swipe falls short, slides out and navigates when it commits. Rubber-bands when there is
+    /// no page to go back/forward to.
     @objc private func edgeSwiped(_ g: UIScreenEdgePanGestureRecognizer) {
         switch g.state {
         case .began:
             edgeStart = desktopPoint(g)
-        case .ended:
+            edgeWeb = model.topWindow(at: edgeStart)?.webView
+        case .changed:
+            guard let web = edgeWeb else { return }
             let t = g.translation(in: host.view)
-            guard abs(t.x) > 48, abs(t.x) > abs(t.y) else { return }
-            guard let w = model.topWindow(at: edgeStart), let web = w.webView else { return }
-            if g.edges == .left, web.canGoBack { web.goBack(); DesktopModel.hapticTap() }
-            if g.edges == .right, web.canGoForward { web.goForward(); DesktopModel.hapticTap() }
-        default: break
+            let can = g.edges == .left ? web.canGoBack : web.canGoForward
+            let dx = g.edges == .left ? max(0, t.x) : min(0, t.x)
+            web.transform = CGAffineTransform(translationX: can ? dx * 0.9 : dx * 0.25, y: 0)
+        default:
+            guard let web = edgeWeb else { return }
+            let t = g.translation(in: host.view)
+            let can = g.edges == .left ? web.canGoBack : web.canGoForward
+            let commit = g.state == .ended && abs(t.x) > 80 && abs(t.x) > abs(t.y) && can
+            let out: CGFloat = g.edges == .left ? web.bounds.width : -web.bounds.width
+            if commit {
+                DesktopModel.hapticTap()
+                UIView.animate(withDuration: 0.16, delay: 0, options: .curveEaseIn) {
+                    web.transform = CGAffineTransform(translationX: out, y: 0)
+                } completion: { _ in
+                    if g.edges == .left { web.goBack() } else { web.goForward() }
+                    web.transform = CGAffineTransform(translationX: -out * 0.35, y: 0)
+                    UIView.animate(withDuration: 0.24, delay: 0.05, options: .curveEaseOut) {
+                        web.transform = .identity
+                    }
+                }
+            } else {
+                UIView.animate(withDuration: 0.25, delay: 0, usingSpringWithDamping: 0.8,
+                               initialSpringVelocity: 0.5, options: []) {
+                    web.transform = .identity
+                }
+            }
+            edgeWeb = nil
         }
     }
 
