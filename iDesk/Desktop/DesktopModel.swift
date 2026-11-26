@@ -217,7 +217,11 @@ final class CursorModel: ObservableObject {
     /// The exact position. Setting it publishes `point` right away and `hover` coarsely.
     var position: CGPoint {
         get { point.value }
-        set { point.value = newValue; publishHover() }
+        set {
+            point.value = newValue
+            typingHidden = false          // a deliberate pointer move shows it again (0.9.16)
+            publishHover()
+        }
     }
     let point = CursorPoint()
     /// What hover highlights follow: snapped to 4 points and published at most 30 times a second
@@ -231,6 +235,8 @@ final class CursorModel: ObservableObject {
     @Published private(set) var style: CursorStyle = .arrow
     /// Bigger for a moment after a shake (ShakeDetector), to find the pointer on a large screen.
     @Published var magnify: CGFloat = 1
+    /// Hidden while text is being typed, as on a computer; any pointer movement brings it back (0.9.16).
+    @Published var typingHidden = false
 
     func setStyle(_ s: CursorStyle) { if style != s { style = s } }
 
@@ -1079,9 +1085,12 @@ final class DesktopModel: ObservableObject {
         guard canOpenAnother() else { return }
         let area = desktopArea
         let size = CGSize(width: min(720, area.width - 16), height: min(440, area.height - 16))
-        let step = CGFloat(windows.count % 8) * 32
-        let origin = CGPoint(x: max(0, (area.width - size.width) / 2 - 96 + step),
-                             y: max(0, (area.height - size.height) / 2 - 48 + step))
+        // Centered on the desktop; the next ones cascade a little so stacked title bars stay
+        // reachable (0.9.16 — they used to open shifted up-left, hugging the corner on the phone).
+        let cx = max(0, (area.width - size.width) / 2), cy = max(0, (area.height - size.height) / 2)
+        let step = windows.isEmpty ? 0 : CGFloat(windows.count % 8) * 24
+        let origin = CGPoint(x: min(cx + step, max(0, area.width - size.width)),
+                             y: min(cy + step, max(0, area.height - size.height)))
         let w = DeskWindow(terminalSession: CGRect(origin: origin, size: size))
         add(w)
         focusedID = w.id
@@ -1106,9 +1115,12 @@ final class DesktopModel: ObservableObject {
         let area = desktopArea
         let size = page.map { CGSize(width: min($0.windowSize.width, area.width - 16), height: min($0.windowSize.height, area.height - 16)) }
             ?? CGSize(width: min(1100, area.width * 0.72), height: min(760, area.height * 0.8))
-        let step = CGFloat(windows.count % 8) * 32
-        let origin = CGPoint(x: max(0, (area.width - size.width) / 2 - 96 + step),
-                             y: max(0, (area.height - size.height) / 2 - 48 + step))
+        // Centered on the desktop; the next ones cascade a little so stacked title bars stay
+        // reachable (0.9.16 — they used to open shifted up-left, hugging the corner on the phone).
+        let cx = max(0, (area.width - size.width) / 2), cy = max(0, (area.height - size.height) / 2)
+        let step = windows.isEmpty ? 0 : CGFloat(windows.count % 8) * 24
+        let origin = CGPoint(x: min(cx + step, max(0, area.width - size.width)),
+                             y: min(cy + step, max(0, area.height - size.height)))
         let w = DeskWindow(url: url, frame: CGRect(origin: origin, size: size))
         w.isWebApp = webApp
         add(w)
@@ -1356,7 +1368,10 @@ final class DesktopModel: ObservableObject {
 
     /// A light tap on snap, minimize and maximize — subtle confirmation like iPad window cues.
     private static let hapticLight = UIImpactFeedbackGenerator(style: .light)
-    static func hapticTap() { hapticLight.impactOccurred() }
+    static func hapticTap() {
+        hapticLight.prepare()          // an idle engine swallows the first tap (0.9.16)
+        hapticLight.impactOccurred()
+    }
 
     func minimize(_ w: DeskWindow) {
         Self.hapticTap()
@@ -2167,7 +2182,9 @@ final class DesktopModel: ObservableObject {
         if editingSticky != nil, stickyIndex(at: p) == nil { editingSticky = nil }
         if editingNotes, widget(at: p) != .notes { editingNotes = false }
         let now = CACurrentMediaTime()
-        let isDouble = now - lastClickTime < 0.45 && hypot(p.x - lastClickPoint.x, p.y - lastClickPoint.y) < 10
+        // Two taps of a finger land further apart than two mouse clicks: 22 points, not 10 (0.9.16) —
+        // the tap recognizer itself already allows 24.
+        let isDouble = now - lastClickTime < 0.45 && hypot(p.x - lastClickPoint.x, p.y - lastClickPoint.y) < 22
         lastClickTime = isDouble ? 0 : now
         lastClickPoint = p
 
@@ -2946,6 +2963,7 @@ final class DesktopModel: ObservableObject {
     // MARK: Keyboard & navigation (act on the focused window)
 
     func typeText(_ s: String) {
+        cursor.typingHidden = true   // the pointer hides while typing, as on a computer (0.9.16)
         if isLocked || showScreenSaver { noteInput(); return }
         noteInput()
         if quickLook != nil { if s == " " { quickLook = nil }; return }
@@ -2999,6 +3017,7 @@ final class DesktopModel: ObservableObject {
         if let term = focused?.terminal { TerminalMods.send(s, to: term) }
     }
     func backspace() {
+        cursor.typingHidden = true
         if isLocked || showScreenSaver { noteInput(); return }
         if let r = recents {
             if r.ids.indices.contains(r.index), let w = window(r.ids[r.index]) { closeFromRecents(w) }

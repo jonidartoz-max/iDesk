@@ -1516,7 +1516,7 @@ private struct CursorView: View {
     @ObservedObject var point: CursorPoint
 
     var body: some View {
-        content.opacity(cursor.drawnByViewer ? 0 : 1)
+        content.opacity(cursor.drawnByViewer || cursor.typingHidden ? 0 : 1)
     }
 
     private var content: some View {
