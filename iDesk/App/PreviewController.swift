@@ -163,7 +163,10 @@ final class PreviewController: UIViewController {
     private func desktopPoint(_ g: UIGestureRecognizer) -> CGPoint { g.location(in: host.view) }
 
     @objc private func tapped(_ g: UITapGestureRecognizer) {
-        model.cursor.position = desktopPoint(g)
+        let p = desktopPoint(g)
+        model.cursor.position = p
+        // Keyboard up and the tap lands on the empty desktop: close the keyboard, like native iOS (0.9.15).
+        if keys.isFirstResponder, model.desktopIsEmpty(at: p) { model.dismissTyping() }
         model.click()
     }
 
@@ -307,6 +310,17 @@ final class PreviewController: UIViewController {
         let focus = (note.object as? Bool) ?? false
         if focus, !keys.isFirstResponder { keys.becomeFirstResponder() }
         if !focus, keys.isFirstResponder { keys.resignFirstResponder() }
+        // A field low on the page would hide under the keyboard: scroll it into view once the keyboard
+        // is up and the desktop has resized, as iOS does natively (0.9.15).
+        if focus, let web = TypingFocus.shared.focusedWebView {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+                guard let self, self.keys.isFirstResponder else { return }
+                web.evaluateJavaScript(
+                    "var el=document.activeElement;if(el){var r=el.getBoundingClientRect();"
+                    + "if(r.bottom>window.innerHeight||r.top<0){el.scrollIntoView({block:'center',inline:'nearest'});}}"
+                ) { _, _ in }
+            }
+        }
     }
 
     /// Native-iOS keyboard feel: the desktop resizes to sit above the keyboard, animated with the

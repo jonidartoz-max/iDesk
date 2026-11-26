@@ -330,6 +330,9 @@ final class DesktopModel: ObservableObject {
             spotlightCache = nil
             if showSpotlight { spotlightFiles = Spotlight.indexFiles() }
             Self.typingTargetChanged()
+            // Spotlight is typed into: the iPhone keyboard opens and closes with it (0.9.15).
+            if showSpotlight { NotificationCenter.default.post(name: .iDeskTypingFocus, object: true) }
+            else { dismissTyping() }
         }
     }
     @Published var spotlightQuery = "" { didSet { spotlightIndex = 0; spotlightCache = nil } }
@@ -355,7 +358,15 @@ final class DesktopModel: ObservableObject {
     @Published var stickies: [StickyNote] = StickyNote.load() { didSet { StickyNote.save(stickies) } }
     /// True while the desktop Notes widget takes typed text (a click on the widget toggles it).
     @Published var editingNotes = false
-    @Published var editingSticky: UUID? { didSet { if editingSticky != oldValue { Self.typingTargetChanged() } } }
+    @Published var editingSticky: UUID? {
+        didSet {
+            guard editingSticky != oldValue else { return }
+            Self.typingTargetChanged()
+            // A sticky note is a typing target: tapping it opens the iPhone keyboard, leaving it closes
+            // the keyboard — as fields inside pages already do (0.9.15).
+            NotificationCenter.default.post(name: .iDeskTypingFocus, object: editingSticky != nil)
+        }
+    }
     /// Locked (LockScreen.swift): nothing reaches the desktop until Face ID / the passcode on the iPhone.
     @Published var isLocked = false
     /// The screen saver after some minutes without input, and when the last input came.
@@ -2002,6 +2013,15 @@ final class DesktopModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
     }
 
+    /// The desktop's background was tapped while typing: close the iPhone keyboard and drop DOM focus
+    /// in the page, so the next tap on the same field opens it again (focusin fires anew, 0.9.15).
+    func dismissTyping() {
+        NotificationCenter.default.post(name: .iDeskTypingFocus, object: false)
+        if let web = TypingFocus.shared.focusedWebView {
+            web.evaluateJavaScript("if(document.activeElement){document.activeElement.blur();}") { _, _ in }
+        }
+    }
+
     /// Nothing interactive at this point: no window, desktop icon, widget, sticky note, panel or the
     /// taskbar. A one-finger drag starting here moves the pointer itself instead of scrolling (0.9.14) —
     /// on the empty desktop scrolling was a no-op, so the finger can now glide the pointer like a trackpad.
@@ -2262,6 +2282,7 @@ final class DesktopModel: ObservableObject {
             guestKeyboardWindow = nil
             NotificationCenter.default.post(name: .iDeskTypingFocus, object: false)
         }
+        if let w = focused, w.addressDraft != nil { w.addressDraft = nil }   // the background leaves the address field too
         focusedID = nil
         if let hit = desktopIcon(at: p) {
             if isDouble && selectedIcon == hit.slot {

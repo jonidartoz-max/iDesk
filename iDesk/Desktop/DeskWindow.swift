@@ -164,7 +164,18 @@ final class DeskWindow: NSObject, ObservableObject, Identifiable, WKUIDelegate, 
 
     // Address bar
     /// What is being typed in the address field; nil while the field is not being edited.
-    @Published var addressDraft: String?
+    @Published var addressDraft: String? {
+        didSet {
+            // The address field is a typing target: the iPhone keyboard opens with it and closes when
+            // it is left, as fields inside pages already do (0.9.15).
+            if (addressDraft != nil) != (oldValue != nil) {
+                NotificationCenter.default.post(name: .iDeskTypingFocus, object: addressDraft != nil)
+                if addressDraft == nil, let web = TypingFocus.shared.focusedWebView {
+                    web.evaluateJavaScript("if(document.activeElement){document.activeElement.blur();}") { _, _ in }
+                }
+            }
+        }
+    }
     @Published private(set) var canGoBack = false
     @Published private(set) var canGoForward = false
     @Published private(set) var isLoading = false

@@ -12,6 +12,10 @@ final class TypingFocus: NSObject, WKScriptMessageHandler {
     static let shared = TypingFocus()
     static let messageName = "ideskTypingFocus"
 
+    /// The web view whose field currently has DOM focus. Tapping the desktop's background blurs it,
+    /// so the keyboard closes and the next tap on the field reports focus anew (0.9.15).
+    private(set) weak var focusedWebView: WKWebView?
+
     static let script = WKUserScript(source: """
         (function() {
             function isField(el) {
@@ -36,6 +40,8 @@ final class TypingFocus: NSObject, WKScriptMessageHandler {
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? String else { return }
+        if body == "focus" { focusedWebView = message.webView }
+        else if focusedWebView === message.webView { focusedWebView = nil }
         NotificationCenter.default.post(name: .iDeskTypingFocus, object: body == "focus")
     }
 }
