@@ -367,7 +367,7 @@ struct SpotlightView: View {
             ForEach(Array(results.enumerated()), id: \.offset) { i, res in
                 let t = model.spotlightRowRect(i)
                 let selected = i == model.spotlightIndex
-                let hovered = t.contains(cursor.position)
+                let hovered = t.contains(cursor.hover)
                 HStack(spacing: 12) {
                     icon(res).frame(width: 28, height: 28)
                     VStack(alignment: .leading, spacing: 1) {

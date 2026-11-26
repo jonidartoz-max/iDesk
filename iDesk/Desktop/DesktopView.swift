@@ -125,7 +125,7 @@ struct DesktopView: View {
                 }
 
                 if let icon = model.iconDrag {
-                    DraggedIconView(shortcut: icon, cursor: model.cursor)
+                    DraggedIconView(shortcut: icon, point: model.cursor.point)
                 }
 
                 if let toast = model.toast {
@@ -143,7 +143,7 @@ struct DesktopView: View {
 
                 if let shot = model.screenshotPreview {
                     ScreenshotPreviewView(preview: shot, rect: model.screenshotPreviewRect,
-                                          hovered: model.screenshotPreviewRect.contains(model.cursor.position))
+                                          hovered: model.screenshotPreviewRect.contains(model.cursor.hover))
                 }
 
                 if let c = model.capture {
@@ -162,7 +162,7 @@ struct DesktopView: View {
                     LockScreenView(model: model, size: geo.size).transition(.opacity)
                 }
 
-                CursorView(cursor: model.cursor)
+                CursorView(cursor: model.cursor, point: model.cursor.point)
                     .opacity(model.cursor.isHidden || model.isLocked || model.showScreenSaver ? 0 : 1)
 
                 MediaHUDView(size: geo.size)
@@ -264,7 +264,7 @@ private struct DesktopIconsView: View {
             }
             ForEach(model.desktopLayout, id: \.slot) { entry in
                 let s = entry.item, r = model.iconRect(entry.slot)
-                let hovered = r.contains(cursor.position) && model.topWindow(at: cursor.position) == nil
+                let hovered = r.contains(cursor.hover) && model.topWindow(at: cursor.hover) == nil
                 let selected = model.selectedIcon == entry.slot
                 let dragged = model.iconDrag.map { DesktopModel.key(of: $0) == DesktopModel.key(of: s) } ?? false
                 let k = DesktopModel.iconScale(model.iconSize)
@@ -292,7 +292,7 @@ private struct DesktopIconsView: View {
 /// The icon being dragged (from the desktop, the app menu or Files), under the pointer.
 private struct DraggedIconView: View {
     let shortcut: Shortcut
-    @ObservedObject var cursor: CursorModel
+    @ObservedObject var point: CursorPoint
 
     var body: some View {
         VStack(spacing: 4) {
@@ -305,7 +305,7 @@ private struct DraggedIconView: View {
         }
         .frame(width: Layout.iconCell.width)
         .opacity(0.85)
-        .offset(x: cursor.position.x - Layout.iconCell.width / 2, y: cursor.position.y - 30)
+        .offset(x: point.value.x - Layout.iconCell.width / 2, y: point.value.y - 30)
         .allowsHitTesting(false)
     }
 }
@@ -441,7 +441,7 @@ private struct TabStrip: View {
     @ObservedObject var cursor: CursorModel
 
     var body: some View {
-        let n = titles.count, p = cursor.position
+        let n = titles.count, p = cursor.hover
         ZStack(alignment: .topLeading) {
             ForEach(titles.indices, id: \.self) { i in
                 let r = Layout.tabRect(i, count: n, in: frame)
@@ -480,7 +480,7 @@ private struct AddressBar: View {
     @ObservedObject private var browsing = Browsing.shared
 
     var body: some View {
-        let f = window.frame, p = cursor.position
+        let f = window.frame, p = cursor.hover
         HStack(spacing: 4) {
             button("chevron.left", enabled: window.canGoBack, hovered: Layout.backButton(in: f).contains(p))
             button("chevron.right", enabled: window.canGoForward, hovered: Layout.forwardButton(in: f).contains(p))
@@ -564,7 +564,7 @@ private struct BookmarksBar: View {
         let layout = Layout.bookmarkItems(marks.map(\.title), in: frame)
         ZStack(alignment: .topLeading) {
             ForEach(Array(layout.items.enumerated()), id: \.offset) { i, r in
-                item(marks[i], hovered: r.contains(cursor.position))
+                item(marks[i], hovered: r.contains(cursor.hover))
                     .frame(width: r.width, height: r.height)
                     .offset(x: r.minX - frame.minX, y: r.minY - frame.minY - Layout.titleBar - Layout.addressBar)
             }
@@ -572,7 +572,7 @@ private struct BookmarksBar: View {
                 Image(systemName: "chevron.right.2")
                     .font(.system(size: 11, weight: .semibold))
                     .frame(width: more.width, height: more.height)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(more.contains(cursor.position) ? Color.white.opacity(0.12) : .clear))
+                    .background(RoundedRectangle(cornerRadius: 6).fill(more.contains(cursor.hover) ? Color.white.opacity(0.12) : .clear))
                     .offset(x: more.minX - frame.minX, y: more.minY - frame.minY - Layout.titleBar - Layout.addressBar)
             }
         }
@@ -605,7 +605,7 @@ private struct TitleButtons: View {
     @ObservedObject var cursor: CursorModel
 
     var body: some View {
-        let hovered = Layout.titleButtons(in: frame).contains(cursor.position)
+        let hovered = Layout.titleButtons(in: frame).contains(cursor.hover)
         let active = focused || hovered
         HStack(spacing: 6) {
             dot(.red, "xmark", 8, active, hovered)
@@ -802,7 +802,7 @@ private struct TaskbarView: View {
     @ObservedObject var cursor: CursorModel
 
     var body: some View {
-        let p = cursor.position
+        let p = cursor.hover
         ZStack {
             Rectangle().fill(.ultraThinMaterial)
             HStack(spacing: 0) {
@@ -1039,7 +1039,7 @@ private struct LauncherView: View {
                 .padding(.horizontal, 10)
                 .frame(width: t.width, height: t.height)
                 .background(RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.white.opacity(t.contains(cursor.position) ? 0.16 : 0.08)))
+                    .fill(Color.white.opacity(t.contains(cursor.hover) ? 0.16 : 0.08)))
                 .offset(x: t.minX - r.minX, y: t.minY - r.minY)
             }
 
@@ -1064,13 +1064,13 @@ private struct LauncherView: View {
                 .padding(.horizontal, 10)
                 .frame(width: t.width, height: t.height)
                 .background(RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.white.opacity(t.contains(cursor.position) ? 0.16 : 0.06)))
+                    .fill(Color.white.opacity(t.contains(cursor.hover) ? 0.16 : 0.06)))
                 .offset(x: t.minX - r.minX, y: t.minY - r.minY)
             }
 
             ForEach(Array(model.launcherItems.enumerated()), id: \.offset) { i, s in
                 let t = model.launcherItemRect(i)
-                let hovered = t.contains(cursor.position)
+                let hovered = t.contains(cursor.hover)
                 VStack(spacing: 8) {
                     AppIcon(shortcut: s, size: 40)
                     Text(s.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
@@ -1131,7 +1131,7 @@ private struct QuickPanelView: View {
     @ObservedObject var cursor: CursorModel
 
     var body: some View {
-        let r = model.quickPanelRect, p = cursor.position
+        let r = model.quickPanelRect, p = cursor.hover
         ZStack(alignment: .topLeading) {
             TimelineView(.periodic(from: .now, by: 15)) { ctx in
                 VStack(alignment: .leading, spacing: 2) {
@@ -1387,7 +1387,7 @@ private struct RecentsView: View {
 
     var body: some View {
         let count = recents.ids.count
-        let p = cursor.position
+        let p = cursor.hover
         ZStack(alignment: .topLeading) {
             Color.black.opacity(0.78)
             if count == 0 {
@@ -1474,7 +1474,7 @@ private struct ContextMenuView: View {
                         .padding(.horizontal, 6)
                         .frame(height: Layout.menuSeparatorHeight)
                 } else {
-                    let hovered = item.enabled && menu.itemRect(i).contains(cursor.position)
+                    let hovered = item.enabled && menu.itemRect(i).contains(cursor.hover)
                     HStack(spacing: 10) {
                         Group {
                             if let s = item.symbol { Image(systemName: s) } else { Color.clear }
@@ -1513,13 +1513,14 @@ extension View {
 
 private struct CursorView: View {
     @ObservedObject var cursor: CursorModel
+    @ObservedObject var point: CursorPoint
 
     var body: some View {
         content.opacity(cursor.drawnByViewer ? 0 : 1)
     }
 
     private var content: some View {
-        let p = cursor.position
+        let p = point.value
         // The press bounce must scale around the hot spot itself, and must come BEFORE offset.
         // Scaling the whole thing after moving it drags the pointer toward the screen corner on every click.
         let press: CGFloat = (cursor.isPressed ? 0.85 : 1) * cursor.magnify

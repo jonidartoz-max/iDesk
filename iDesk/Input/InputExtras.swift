@@ -126,7 +126,7 @@ extension DesktopModel {
         let rows = CGFloat((EmojiPanel.all.count + EmojiPanel.columns - 1) / EmojiPanel.columns)
         let w = EmojiPanel.padding * 2 + CGFloat(EmojiPanel.columns) * EmojiPanel.cell
         let h = EmojiPanel.padding * 2 + EmojiPanel.header + rows * EmojiPanel.cell
-        let p = cursor.position
+        let p = cursor.hover
         return CGRect(x: min(max(8, p.x - w / 2), screenSize.width - w - 8), y: max(8, min(p.y + 20, taskbarTop - h - 8)), width: w, height: h)
     }
 
@@ -174,7 +174,7 @@ struct EmojiPanelView: View {
                 Text(verbatim: EmojiPanel.all[i]).font(.system(size: 24))
                     .frame(width: t.width, height: t.height)
                     .background(RoundedRectangle(cornerRadius: 8)
-                        .fill(i == model.emojiIndex ? Color.accentColor.opacity(0.55) : t.contains(cursor.position) ? Color.white.opacity(0.14) : .clear))
+                        .fill(i == model.emojiIndex ? Color.accentColor.opacity(0.55) : t.contains(cursor.hover) ? Color.white.opacity(0.14) : .clear))
                     .offset(x: t.minX - r.minX, y: t.minY - r.minY)
             }
         }

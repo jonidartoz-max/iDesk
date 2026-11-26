@@ -137,7 +137,7 @@ struct FillSuggestionView: View {
             ForEach(Array(suggestion.ids.enumerated()), id: \.element) { i, id in
                 if let w = model.windows.first(where: { $0.id == id }) {
                     let t = model.fillCardRect(i, of: suggestion)
-                    let hovered = t.contains(cursor.position)
+                    let hovered = t.contains(cursor.hover)
                     VStack(spacing: 8) {
                         Group {
                             if let image = model.fillThumbnails[id] {
@@ -239,7 +239,7 @@ struct StickiesView: View {
                     HStack {
                         Spacer()
                         Image(systemName: "xmark").font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(Color.black.opacity(close.contains(cursor.position) ? 0.8 : 0.4))
+                            .foregroundStyle(Color.black.opacity(close.contains(cursor.hover) ? 0.8 : 0.4))
                             .frame(width: close.width, height: close.height)
                     }
                     .frame(height: StickyNote.header)

@@ -514,7 +514,7 @@ struct DesktopWidgetsView: View {
     }
 
     private func button(_ title: LocalizedStringKey, _ i: Int, primary: Bool) -> some View {
-        let hovered = model.pomodoroButtonRect(i).contains(cursor.position)
+        let hovered = model.pomodoroButtonRect(i).contains(cursor.hover)
         return Text(title).font(.system(size: 12, weight: .semibold))
             .frame(width: 68, height: 28)
             .background(RoundedRectangle(cornerRadius: 8).fill(primary ? Color.accentColor.opacity(hovered ? 1 : 0.8)

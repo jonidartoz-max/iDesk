@@ -220,7 +220,7 @@ struct ClipboardPanelView: View {
             let clear = model.clipboardClearRect
             Text("Clear all").font(.system(size: 12, weight: .medium))
                 .frame(width: clear.width, height: clear.height)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(clear.contains(cursor.position) ? 0.18 : 0.08)))
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(clear.contains(cursor.hover) ? 0.18 : 0.08)))
                 .offset(x: clear.minX - r.minX, y: clear.minY - r.minY)
 
             if visible.items.isEmpty {
@@ -249,7 +249,7 @@ struct ClipboardPanelView: View {
                 .padding(.horizontal, 10)
                 .frame(width: t.width, height: t.height)
                 .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(selected ? Color.accentColor.opacity(0.55) : t.contains(cursor.position) ? Color.white.opacity(0.1) : .clear))
+                    .fill(selected ? Color.accentColor.opacity(0.55) : t.contains(cursor.hover) ? Color.white.opacity(0.1) : .clear))
                 .offset(x: t.minX - r.minX, y: t.minY - r.minY)
             }
         }

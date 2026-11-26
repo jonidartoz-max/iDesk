@@ -181,8 +181,15 @@ final class PreviewController: UIViewController {
         switch g.state {
         case .began:
             let t = g.translation(in: host.view)
-            model.cursor.position = CGPoint(x: p.x - t.x, y: p.y - t.y)
-            model.mouseDown()
+            // Empty desktop (no window, icon, widget or panel under the finger): the drag glides the
+            // pointer itself from where it is, like a trackpad — nothing is grabbed and nothing
+            // scrolls (scrolling out there was a no-op anyway). Everywhere else the drag presses
+            // at the touch point as before.
+            freePointer = model.desktopIsEmpty(at: CGPoint(x: p.x - t.x, y: p.y - t.y))
+            if !freePointer {
+                model.cursor.position = CGPoint(x: p.x - t.x, y: p.y - t.y)
+                model.mouseDown()
+            }
             model.moveCursor(dx: t.x, dy: t.y)
             panScrolled = false
             keyboardDragDismiss = keyboardHeight > 0 && p.y > host.view.bounds.maxY - 120
@@ -195,7 +202,9 @@ final class PreviewController: UIViewController {
                     keyboardDragDismiss = false
                 }
             }
-            if model.touchScrollsFreely {
+            if freePointer {
+                model.moveCursor(dx: p.x - lastPan.x, dy: p.y - lastPan.y)
+            } else if model.touchScrollsFreely {
                 if !panScrolled { panScrolled = true; momentum.cancel() }
                 model.scroll(dx: -(p.x - lastPan.x), dy: -(p.y - lastPan.y))
             } else {
@@ -209,11 +218,14 @@ final class PreviewController: UIViewController {
             }
             model.mouseUp()
             keyboardDragDismiss = false
+            freePointer = false
         }
         lastPan = p
     }
 
     private var panScrolled = false
+    /// The current one-finger drag moves only the pointer (it started on the empty desktop).
+    private var freePointer = false
     private var edgeStart: CGPoint = .zero
     private var edgeWeb: WKWebView?
     /// Set on touch-down while the keyboard is open and the finger starts just above it:

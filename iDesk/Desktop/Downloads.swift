@@ -287,7 +287,7 @@ struct DownloadsPanelView: View {
 
     var body: some View {
         let r = model.downloadsRect
-        let p = cursor.position
+        let p = cursor.hover
         ZStack(alignment: .topLeading) {
             Text("Downloads").font(.system(size: 16, weight: .semibold))
                 .frame(height: DownloadsPanel.header).offset(x: DownloadsPanel.padding + 10, y: DownloadsPanel.padding)

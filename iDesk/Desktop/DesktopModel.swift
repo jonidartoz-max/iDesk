@@ -205,8 +205,25 @@ struct DeskNotification: Identifiable {
 
 // MARK: - Pointer (separate so moving it does not redraw the whole desktop)
 
+/// The pointer's exact position, published at the full input rate. Only the pointer itself and what must
+/// follow the finger one to one (a dragged icon) observes this; everything else observes `CursorModel.hover`,
+/// so a moving pointer redraws the pointer and nothing else (0.9.14: it used to redraw every window's chrome,
+/// the icons, the taskbar and every panel on every move — that storm was the lag behind the finger).
+final class CursorPoint: ObservableObject {
+    @Published var value = CGPoint(x: 200, y: 200)
+}
+
 final class CursorModel: ObservableObject {
-    @Published var position: CGPoint = CGPoint(x: 200, y: 200)
+    /// The exact position. Setting it publishes `point` right away and `hover` coarsely.
+    var position: CGPoint {
+        get { point.value }
+        set { point.value = newValue; publishHover() }
+    }
+    let point = CursorPoint()
+    /// What hover highlights follow: snapped to 4 points and published at most 30 times a second
+    /// (with a trailing publish, so the resting position always lands). At that granularity the
+    /// highlights look identical; the desktop just stops re-rendering per input event.
+    @Published private(set) var hover = CGPoint(x: 200, y: 200)
     @Published var isPressed = false
     @Published var isHidden = false              // while a screenshot is taken
     /// A laptop's browser shows the desktop (RemoteDisplay) and draws its own pointer, which moves without delay.
@@ -216,6 +233,25 @@ final class CursorModel: ObservableObject {
     @Published var magnify: CGFloat = 1
 
     func setStyle(_ s: CursorStyle) { if style != s { style = s } }
+
+    private var lastHoverPublish: CFAbsoluteTime = 0
+    private var hoverWork: DispatchWorkItem?
+
+    private func publishHover() {
+        hoverWork?.cancel()
+        let p = point.value
+        let q = CGPoint(x: (p.x / 4).rounded() * 4, y: (p.y / 4).rounded() * 4)
+        guard q != hover else { return }
+        let now = CFAbsoluteTimeGetCurrent()
+        if now - lastHoverPublish >= 1.0 / 30 {
+            lastHoverPublish = now
+            hover = q
+        } else {
+            let work = DispatchWorkItem { [weak self] in self?.publishHover() }
+            hoverWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 30, execute: work)
+        }
+    }
 }
 
 // MARK: - Desktop state
@@ -253,7 +289,13 @@ final class DesktopModel: ObservableObject {
         TextReplacements.typed = ""
     }
     @Published var screenSize: CGSize = CGSize(width: 1280, height: 720) {
-        didSet { if screenSize != oldValue { fitWindowsToScreen() } }
+        didSet {
+            guard screenSize != oldValue else { return }
+            fitWindowsToScreen()
+            // A rotation can shrink the desktop: keep the pointer on it.
+            cursor.position = CGPoint(x: min(max(0, cursor.position.x), screenSize.width - 1),
+                                      y: min(max(0, cursor.position.y), screenSize.height - 1))
+        }
     }
     @Published var isExternalConnected = false
     @Published var showLauncher = false {
@@ -1875,7 +1917,9 @@ final class DesktopModel: ObservableObject {
                 f.origin.y = max(0, sf.maxY - nh)
                 f.size.height = sf.maxY - f.origin.y
             }
-            w.frame = f
+            // Through the same 30 Hz coalescing as window drags and pinch (0.9.14): resizing a live web
+            // page at the full touch rate stuttered badly, the window trailing far behind the finger.
+            setWindowFrame(w, f)
         case let .guest(id):
             guard let w = window(id) else { return }
             let local = localPoint(p, in: w)
@@ -1956,6 +2000,17 @@ final class DesktopModel: ObservableObject {
         }
         taskPreviewWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
+    }
+
+    /// Nothing interactive at this point: no window, desktop icon, widget, sticky note, panel or the
+    /// taskbar. A one-finger drag starting here moves the pointer itself instead of scrolling (0.9.14) —
+    /// on the empty desktop scrolling was a no-op, so the finger can now glide the pointer like a trackpad.
+    func desktopIsEmpty(at p: CGPoint) -> Bool {
+        guard !isLocked, capture == nil, quickLook == nil, contextMenu == nil, recents == nil,
+              !showLauncher, !showSpotlight, !showClipboard, !showEmoji, !showQuickPanel, banner == nil,
+              p.y < taskbarHitTop else { return false }
+        return pointerWindow(at: p) == nil && desktopIcon(at: p) == nil
+            && widget(at: p) == nil && stickyIndex(at: p) == nil
     }
 
     /// Press (start of a drag): drag the title bar to move, an edge/corner to resize.
