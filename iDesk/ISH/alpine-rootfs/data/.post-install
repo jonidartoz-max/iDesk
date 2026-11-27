@@ -1,6 +1,10 @@
 #!/bin/sh
 
-if [ "$(readlink /bin/ip)" = "/bin/busybox" ]; then
-	rm -f /bin/ip
-fi
+cat >&2 <<EOF
+*
+* If you need ICU with non-English locales and legacy charset support, install
+* package icu-data-full.
+*
+EOF
+
 exit 0
