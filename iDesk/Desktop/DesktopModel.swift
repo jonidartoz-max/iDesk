@@ -88,7 +88,10 @@ enum Layout {
     static let taskItemGap: CGFloat = 6
     static let pinnedWidth: CGFloat = 44           // a pinned app that is not open: icon only
     static let buttonHeight: CGFloat = 40
-    static let trayWidth: CGFloat = 290
+    /// Full tray on a display, compact on the phone in portrait, so window buttons still fit on
+    /// the bar: on a 560-wide desktop a 290 tray left 16 pt for buttons and every one was dropped,
+    /// and a minimized window could not be found anywhere (0.9.17).
+    static func trayWidth(for screenWidth: CGFloat) -> CGFloat { screenWidth >= 700 ? 290 : 156 }
     static let showDesktopWidth: CGFloat = 10
 
     // App menu (grid)
@@ -1813,8 +1816,15 @@ final class DesktopModel: ObservableObject {
     }
 
     var trayRect: CGRect {
-        CGRect(x: screenSize.width - Layout.showDesktopWidth - Layout.trayWidth, y: taskbarTop,
-               width: Layout.trayWidth, height: Layout.taskbar)
+        let w = Layout.trayWidth(for: screenSize.width)
+        return CGRect(x: screenSize.width - Layout.showDesktopWidth - w, y: taskbarTop,
+                      width: w, height: Layout.taskbar)
+    }
+
+    /// Where a minimized window shrinks to: its taskbar button, or — when the button does not fit
+    /// on a narrow screen — the Recent apps button, which still reaches it (0.9.17).
+    func minimizeTarget(for id: UUID) -> CGRect {
+        taskLayout.first { $0.entry.window?.id == id }?.rect ?? navButtonRect(.recents)
     }
 
     var showDesktopRect: CGRect {

@@ -358,7 +358,16 @@ private struct WindowView: View {
         )
         .shadow(color: .black.opacity(focused ? 0.5 : 0.25), radius: focused ? 24 : 10, y: 8)
         .offset(x: f.minX, y: f.minY)
-        .scaleEffect(window.isShown ? 1 : 0.85)
+        // Minimized: shrink into the window's taskbar button (or Recent apps when the button does
+        // not fit on a narrow bar), so it shows where the window went; on another workspace: fade
+        // in place (0.9.17 — it used to vanish without a trace).
+        .scaleEffect(window.isMinimized
+                     ? min(1, DesktopModel.shared.minimizeTarget(for: window.id).height / max(1, f.height))
+                     : window.isShown ? 1 : 0.85)
+        .offset(window.isMinimized
+                ? CGSize(width: DesktopModel.shared.minimizeTarget(for: window.id).midX - f.midX,
+                         height: DesktopModel.shared.minimizeTarget(for: window.id).midY - f.midY)
+                : .zero)
         .opacity(window.isShown ? 1 : 0)   // keep the web view alive while minimized or on another workspace
     }
 }
@@ -873,7 +882,8 @@ private struct TaskbarView: View {
                         .frame(width: 46, alignment: .leading)
                 }
 
-                TrayView().frame(width: Layout.trayWidth, height: Layout.taskbar)
+                TrayView(compact: Layout.trayWidth(for: model.screenSize.width) < 290)
+                    .frame(width: Layout.trayWidth(for: model.screenSize.width), height: Layout.taskbar)
 
                 // Right corner: show desktop
                 Rectangle()
@@ -944,17 +954,24 @@ private struct TaskItem: View {
 /// System tray: memory, network, battery, time and date.
 private struct TrayView: View {
     @ObservedObject private var network = NetworkStatus.shared
+    /// The phone in portrait: no date, and the memory reading appears only when it matters, so
+    /// window buttons still fit on the bar (0.9.17).
+    let compact: Bool
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 5)) { ctx in
-            HStack(spacing: 14) {
+            HStack(spacing: compact ? 10 : 14) {
                 // Memory: every app runs inside iDesk; orange / red when iOS is about to close it.
                 let memory = MemoryStatus.level
-                HStack(spacing: 4) {
-                    Image(systemName: "memorychip")
-                    Text(verbatim: MemoryStatus.format(MemoryStatus.used)).font(.system(size: 12).monospacedDigit())
+                if !compact || memory != .fine {
+                    HStack(spacing: 4) {
+                        Image(systemName: "memorychip")
+                        if !compact {
+                            Text(verbatim: MemoryStatus.format(MemoryStatus.used)).font(.system(size: 12).monospacedDigit())
+                        }
+                    }
+                    .foregroundStyle(memory == .critical ? Color.red : memory == .low ? Color.orange : Color.primary)
                 }
-                .foregroundStyle(memory == .critical ? Color.red : memory == .low ? Color.orange : Color.primary)
                 Image(systemName: network.symbol)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(network.kind == .offline ? Color.secondary : Color.primary)
@@ -968,16 +985,21 @@ private struct TrayView: View {
                 if level >= 0 {
                     HStack(spacing: 4) {
                         Image(systemName: batterySymbol(level, UIDevice.current.batteryState))
-                        Text("\(Int((level * 100).rounded()))%").font(.system(size: 12).monospacedDigit())
+                        // In the compact bar a memory warning takes the percent's room.
+                        if !compact || memory == .fine {
+                            Text("\(Int((level * 100).rounded()))%").font(.system(size: 12).monospacedDigit())
+                        }
                     }
                     .foregroundStyle(level <= 0.2 && UIDevice.current.batteryState == .unplugged ? Color.orange : Color.primary)
                 }
                 VStack(alignment: .trailing, spacing: 1) {
                     Text(ctx.date.formatted(date: .omitted, time: .shortened))
                         .font(.system(size: 13, weight: .medium).monospacedDigit())
-                    Text(ctx.date.formatted(.dateTime.day(.twoDigits).month(.twoDigits).year()))
-                        .font(.system(size: 11).monospacedDigit())
-                        .foregroundStyle(.secondary)
+                    if !compact {
+                        Text(ctx.date.formatted(.dateTime.day(.twoDigits).month(.twoDigits).year()))
+                            .font(.system(size: 11).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .padding(.trailing, 12)
