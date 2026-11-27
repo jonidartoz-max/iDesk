@@ -75,8 +75,10 @@ struct DesktopView: View {
                 }
 
                 if model.taskbarVisible {
+                    // topLeading is load-bearing: the dock's children sit at absolute offsets, and a
+                    // centered frame would push them off the bottom of the screen (0.9.18's blank dock).
                     TaskbarView(model: model, cursor: model.cursor)
-                        .frame(width: geo.size.width, height: geo.size.height)
+                        .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                         .transition(.move(edge: .bottom))
                 }
 
@@ -876,13 +878,20 @@ private struct TaskbarView: View {
         }
     }
 
+    // System buttons as iOS-style squircle icons (0.9.19 — they used to be bare glyphs).
     private func systemSlot(_ name: String, _ slot: DesktopModel.DockSlot, active: Bool, _ p: CGPoint) -> some View {
-        Image(systemName: name)
-            .font(.system(size: 16, weight: .semibold))
+        let s = min(30, slot.rect.height - 10)
+        return Image(systemName: name)
+            .font(.system(size: s * 0.46, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: s, height: s)
+            .background(RoundedRectangle(cornerRadius: s * 0.26, style: .continuous)
+                .fill(active ? Color.accentColor
+                      : Color(white: 0.26).opacity(0.9))
+                .shadow(color: .black.opacity(0.3), radius: 2, y: 1))
             .frame(width: slot.rect.width, height: slot.rect.height)
             .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(active ? Color.accentColor.opacity(0.5)
-                      : slot.rect.contains(p) ? Color.white.opacity(0.14) : .clear))
+                .fill(slot.rect.contains(p) ? Color.white.opacity(0.14) : .clear))
     }
 
     // Workspaces (when turned on): the one shown is highlighted, a dot marks those with windows.
