@@ -1,3 +1,6 @@
 #!/bin/sh
-add-shell '/bin/bash'
+
+if [ "$(readlink /bin/ip)" = "/bin/busybox" ]; then
+	rm -f /bin/ip
+fi
 exit 0
