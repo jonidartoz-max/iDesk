@@ -300,12 +300,16 @@ final class DesktopModel: ObservableObject {
     @Published var isExternalConnected = false
     @Published var showLauncher = false {
         didSet {
-            if !showLauncher { launcherQuery = "" }
+            if !showLauncher { launcherQuery = ""; launcherScroll = 0 }
             if showLauncher != oldValue { Self.typingTargetChanged() }
         }
     }
+    /// Window whose taskbar slot is bouncing right now (0.9.22: launch feedback).
+    @Published var dockBounceID: UUID?
     /// Typed while the app menu is open: filters the apps.
     @Published var launcherQuery = ""
+    /// Scroll offset inside the app menu once it is clamped to the screen (0.9.22).
+    @Published var launcherScroll: CGFloat = 0
     /// Apps pinned to the taskbar (keys: app bundle id or web address), in order.
     @Published private(set) var pinnedKeys: [String] = UserDefaults.standard.stringArray(forKey: Keys.pinned)
         ?? ["https://www.google.com"] {
@@ -1285,7 +1289,7 @@ final class DesktopModel: ObservableObject {
                       y: min(max(area.minY, f.minY), area.maxY - f.height), width: f.width, height: f.height)
     }
 
-    private func add(_ w: DeskWindow) {
+    private func add(_ w: DeskWindow, bounce: Bool = true) {
         w.workspace = workspace
         w.onChange = { [weak self] in self?.scheduleSave() }
         w.onCloseRequest = { [weak self, weak w] in if let self, let w { self.close(w) } }
@@ -1296,6 +1300,13 @@ final class DesktopModel: ObservableObject {
         windows.append(w)
         restack()
         scheduleSave()
+        // 0.9.22: the new window's taskbar slot hops once so a launch is visible on the bar.
+        if bounce {
+            dockBounceID = w.id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+                if self?.dockBounceID == w.id { self?.dockBounceID = nil }
+            }
+        }
     }
 
     func focus(_ w: DeskWindow) {
@@ -1927,17 +1938,31 @@ final class DesktopModel: ObservableObject {
         dockSlots.compactMap { slot in slot.entry.map { ($0, slot.rect) } }
     }
 
-    var launcherRect: CGRect {
+    /// Full height of the app menu's content before it is clamped to the screen (0.9.22: the menu
+    /// can hold many guest apps, so it scrolls instead of growing past the top edge).
+    private var launcherContentHeight: CGFloat {
         let cols = Layout.launcherColumns, recents = launcherRecents.count, count = launcherItems.count
         // With a Recent row: that row, then the apps from a new row, each under its own title.
         let rows = CGFloat(max(1, recents > 0 ? 1 + (count - recents + cols - 1) / cols : (count + cols - 1) / cols))
         let t = Layout.launcherTile, g = Layout.launcherGap, pad = Layout.launcherPadding
-        let w = pad * 2 + CGFloat(cols) * t.width + CGFloat(cols - 1) * g
         let titles = recents > 0 ? Layout.launcherSectionTitle * 2 : 0
         let footer = launcherShowsAppsHint ? Layout.launcherFooter : 0
-        let h = pad * 2 + Layout.launcherHeader + titles + rows * t.height + max(0, rows - 1) * g + footer
-        return CGRect(x: 8, y: max(8, taskbarTop - h - 8), width: w, height: h)
+        return pad * 2 + Layout.launcherHeader + titles + rows * t.height + max(0, rows - 1) * g + footer
     }
+
+    var launcherRect: CGRect {
+        let cols = Layout.launcherColumns
+        let t = Layout.launcherTile, g = Layout.launcherGap, pad = Layout.launcherPadding
+        let w = pad * 2 + CGFloat(cols) * t.width + CGFloat(cols - 1) * g
+        let h = min(launcherContentHeight, taskbarTop - 16)
+        return CGRect(x: 8, y: taskbarTop - h - 8, width: w, height: h)
+    }
+
+    /// How far the app menu's content can scroll; zero while everything fits.
+    var launcherMaxScroll: CGFloat { max(0, launcherContentHeight - launcherRect.height) }
+
+    /// launcherScroll clamped to what the current content allows (typing shrinks the list).
+    var launcherEffectiveScroll: CGFloat { min(max(0, launcherScroll), launcherMaxScroll) }
 
     func launcherItemRect(_ i: Int) -> CGRect {
         let r = launcherRect, t = Layout.launcherTile, g = Layout.launcherGap, pad = Layout.launcherPadding
@@ -1949,7 +1974,7 @@ final class DesktopModel: ObservableObject {
             else { row = 1 + (i - recents) / cols; col = (i - recents) % cols; titles += Layout.launcherSectionTitle }
         }
         return CGRect(x: r.minX + pad + CGFloat(col) * (t.width + g),
-                      y: r.minY + pad + Layout.launcherHeader + titles + CGFloat(row) * (t.height + g),
+                      y: r.minY + pad + Layout.launcherHeader + titles + CGFloat(row) * (t.height + g) - launcherEffectiveScroll,
                       width: t.width, height: t.height)
     }
 
@@ -2828,6 +2853,10 @@ final class DesktopModel: ObservableObject {
     func scroll(dx: CGFloat, dy: CGFloat) {
         if isLocked || showScreenSaver { noteInput(); return }
         let p = cursor.position
+        if showLauncher {
+            if launcherRect.contains(p) { launcherScroll = min(max(0, launcherScroll + dy), launcherMaxScroll) }
+            return
+        }
         if quickLook != nil {
             if quickLookRect.contains(p) { QuickLook.scroll(dx: dx, dy: dy) }
             return
@@ -3713,7 +3742,7 @@ final class DesktopModel: ObservableObject {
                 win.isMaximized = true
             }
             win.isMinimized = s.minimized
-            add(win)
+            add(win, bounce: false)
             win.workspace = workspacesEnabled ? min(max(0, s.workspace ?? 0), Self.workspaceCount - 1) : 0
             win.isOffDesk = win.workspace != workspace
         }

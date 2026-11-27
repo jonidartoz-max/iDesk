@@ -122,6 +122,7 @@ struct DesktopView: View {
 
                 if let menu = model.contextMenu {
                     ContextMenuView(menu: menu, cursor: model.cursor)
+                        .panelAppear(.topLeading)
                 }
 
                 if let url = model.quickLook {
@@ -129,6 +130,7 @@ struct DesktopView: View {
                         .frame(width: geo.size.width, height: geo.size.height)
                         .allowsHitTesting(false)
                     QuickLookView(url: url, rect: model.quickLookRect)
+                        .panelAppear(.center)
                 }
 
                 if let icon = model.iconDrag {
@@ -145,6 +147,7 @@ struct DesktopView: View {
                         .frame(maxWidth: min(560, geo.size.width - 32))
                         .padding(.top, 24)
                         .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
+                        .panelAppear(.top)
                         .allowsHitTesting(false)
                 }
 
@@ -892,7 +895,8 @@ private struct TaskbarView: View {
         case .workspace(let n): workspaceSlot(n, slot, p)
         case nil:
             if let w = slot.entry?.window {
-                WindowSlot(window: w, focused: w.id == model.focusedID, hovered: slot.rect.contains(p))
+                WindowSlot(window: w, focused: w.id == model.focusedID, hovered: slot.rect.contains(p),
+                           bouncing: model.dockBounceID == w.id)
                     .frame(width: slot.rect.width, height: slot.rect.height)
             } else if case let .pinned(shortcut, _)? = slot.entry {
                 AppIcon(shortcut: shortcut, size: min(30, slot.rect.height - 10))
@@ -943,6 +947,8 @@ private struct WindowSlot: View {
     @ObservedObject var window: DeskWindow
     let focused: Bool
     let hovered: Bool
+    /// 0.9.22: the slot hops once when its window opens, like a dock icon bouncing on launch.
+    var bouncing: Bool = false
 
     var body: some View {
         let active = focused && !window.isMinimized
@@ -968,6 +974,8 @@ private struct WindowSlot: View {
         }
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
             .fill(hovered ? Color.white.opacity(0.14) : .clear))
+        .offset(y: bouncing ? -9 : 0)
+        .animation(.spring(response: 0.3, dampingFraction: 0.42), value: bouncing)
     }
 }
 
@@ -1070,6 +1078,7 @@ private struct LauncherView: View {
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.08)))
             .offset(x: Layout.launcherPadding, y: Layout.launcherPadding + 34)
 
+            Group {
             if model.launcherItems.isEmpty {
                 // Nothing matches: Enter (or a click here) searches the web for what was typed.
                 let t = model.launcherSearchRect
@@ -1096,6 +1105,25 @@ private struct LauncherView: View {
                     .offset(x: Layout.launcherPadding + 4, y: all.minY - r.minY - Layout.launcherSectionTitle + 4)
             }
 
+            ForEach(Array(model.launcherItems.enumerated()), id: \.offset) { i, s in
+                let t = model.launcherItemRect(i)
+                let hovered = t.contains(cursor.hover)
+                VStack(spacing: 8) {
+                    AppIcon(shortcut: s, size: 40)
+                    Text(s.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                }
+                .frame(width: t.width, height: t.height)
+                .background(RoundedRectangle(cornerRadius: 10).fill(hovered ? Color.white.opacity(0.14) : .clear))
+                .offset(x: t.minX - r.minX, y: t.minY - r.minY)
+            }
+            }
+            // Scrolled items stay below the header and above the footer hint (0.9.22).
+            .mask(Rectangle()
+                .frame(width: r.width,
+                       height: r.height - Layout.launcherPadding - Layout.launcherHeader
+                           - (model.launcherShowsAppsHint ? Layout.launcherFooter : 0))
+                .offset(x: 0, y: Layout.launcherPadding + Layout.launcherHeader))
+
             if model.launcherShowsAppsHint {
                 let t = model.launcherAppsHintRect
                 HStack(spacing: 8) {
@@ -1109,18 +1137,6 @@ private struct LauncherView: View {
                 .frame(width: t.width, height: t.height)
                 .background(RoundedRectangle(cornerRadius: 8)
                     .fill(Color.white.opacity(t.contains(cursor.hover) ? 0.16 : 0.06)))
-                .offset(x: t.minX - r.minX, y: t.minY - r.minY)
-            }
-
-            ForEach(Array(model.launcherItems.enumerated()), id: \.offset) { i, s in
-                let t = model.launcherItemRect(i)
-                let hovered = t.contains(cursor.hover)
-                VStack(spacing: 8) {
-                    AppIcon(shortcut: s, size: 40)
-                    Text(s.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                }
-                .frame(width: t.width, height: t.height)
-                .background(RoundedRectangle(cornerRadius: 10).fill(hovered ? Color.white.opacity(0.14) : .clear))
                 .offset(x: t.minX - r.minX, y: t.minY - r.minY)
             }
         }
