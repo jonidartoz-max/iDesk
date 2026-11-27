@@ -449,7 +449,13 @@ enum LocalShell {
         let fm = FileManager.default
         let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let installed = support.appendingPathComponent("alpine-rootfs")
-        if fm.fileExists(atPath: installed.path) { return installed.path }
+        // 0.9.23: the bundled rootfs carries a version marker. An older (or unmarked) installed
+        // copy is replaced so updated tools (curl, bash, …) reach existing installs, not only
+        // first boots.
+        let bundledV = (try? String(contentsOf: bundled.appendingPathComponent("idesk-rootfs-version"), encoding: .utf8)) ?? ""
+        let installedV = (try? String(contentsOf: installed.appendingPathComponent("idesk-rootfs-version"), encoding: .utf8)) ?? ""
+        if fm.fileExists(atPath: installed.path), bundledV == installedV { return installed.path }
+        if fm.fileExists(atPath: installed.path) { try? fm.removeItem(at: installed) }
         guard let items = fm.enumerator(at: bundled, includingPropertiesForKeys: nil)?.allObjects as? [URL] else {
             lastError = "could not enumerate \(bundled.path)"
             return nil
