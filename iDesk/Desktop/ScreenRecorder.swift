@@ -129,7 +129,8 @@ extension DesktopModel {
     var recordButtonRect: CGRect? {
         guard ScreenRecorder.shared.isRecording else { return nil }
         let right = downloadsButtonRect?.minX ?? trayRect.minX
-        return CGRect(x: right - 92, y: taskbarTop + 6, width: 86, height: Layout.buttonHeight - 4)
+        return CGRect(x: right - 94, y: trayRect.minY + (Layout.dockHeight - Layout.buttonHeight + 4) / 2,
+                      width: 86, height: Layout.buttonHeight - 4)
     }
 }
 

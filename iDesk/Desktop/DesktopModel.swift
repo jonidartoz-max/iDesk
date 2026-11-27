@@ -11,7 +11,7 @@ enum Layout {
     static let titleBar: CGFloat = 34
     static let addressBar: CGFloat = 38            // web windows: back, forward, reload, address field
     static let bookmarksBar: CGFloat = 30          // under it, when there are bookmarks (Browsing.showsBookmarksBar)
-    static let taskbar: CGFloat = 48
+    static let taskbar: CGFloat = 56            // the strip the floating dock pills sit in (0.9.18)
     static let resizeGrip: CGFloat = 36       // corner grab (finger-sized: the desktop runs scaled on the phone)
     static let edgeGrab: CGFloat = 18          // how far outside a window's edge it can still be grabbed to resize
     static let minWindowSize = CGSize(width: 360, height: 260)
@@ -70,27 +70,18 @@ enum Layout {
         return (rects, nil)
     }
 
-    // Taskbar
-    static let startX: CGFloat = 8
-    static let startWidth: CGFloat = 44
-    static let navX: CGFloat = 56                   // navigation buttons: Spotlight, Recent apps, Home, Back
-    static let navWidth: CGFloat = 40
-    static let navGap: CGFloat = 4
-    static let navCount: CGFloat = 4                // Spotlight, Recent apps, Home, Back
-    static let workspaceX: CGFloat = navX + navCount * navWidth + (navCount - 1) * navGap + 8   // workspace switcher: 1 2 3 4
+    // The dock (0.9.18, iPhone/Duo style): one floating pill of icon slots, left of the tray pill.
+    static let dockHeight: CGFloat = 48           // the pill
+    static let dockBottom: CGFloat = 4            // gap under the pill
+    static let dockPad: CGFloat = 10              // padding inside the pill
+    static let dockGap: CGFloat = 10              // between slots
+    static let dockIcon: CGFloat = 34             // slot width; shrinks to dockIconMin when crowded
+    static let dockIconMin: CGFloat = 26
+    static let dockDivider: CGFloat = 12          // the hairline between the buttons and the apps, with its room
     static let workspaceCell: CGFloat = 20
-    static let workspaceWidth: CGFloat = 4 * workspaceCell
-    /// Where the window buttons start: after the workspace switcher when it is shown (Settings → Desktop).
-    static var taskItemX: CGFloat {
-        UserDefaults.standard.bool(forKey: DesktopModel.Keys.workspaces) ? workspaceX + workspaceWidth + 10 : workspaceX
-    }
-    static let taskItemMaxWidth: CGFloat = 200
-    static let taskItemGap: CGFloat = 6
-    static let pinnedWidth: CGFloat = 44           // a pinned app that is not open: icon only
-    static let buttonHeight: CGFloat = 40
-    /// Full tray on a display, compact on the phone in portrait, so window buttons still fit on
-    /// the bar: on a 560-wide desktop a 290 tray left 16 pt for buttons and every one was dropped,
-    /// and a minimized window could not be found anywhere (0.9.17).
+    static let buttonHeight: CGFloat = 40         // a dock slot's height
+    /// Full tray on a display, compact on the phone in portrait, so window icons still fit in
+    /// the dock (0.9.17 — a fixed 290 tray used to push every window button off the bar).
     static func trayWidth(for screenWidth: CGFloat) -> CGFloat { screenWidth >= 700 ? 290 : 156 }
     static let showDesktopWidth: CGFloat = 10
 
@@ -578,6 +569,14 @@ final class DesktopModel: ObservableObject {
             case let .window(w): return w
             }
         }
+    }
+
+    /// One tappable slot in the dock: a system button, a workspace cell, or an app/window icon (0.9.18).
+    struct DockSlot {
+        enum Kind: Equatable { case launcher, search, recents, home, back, workspace(Int) }
+        let kind: Kind?
+        let entry: TaskEntry?
+        let rect: CGRect
     }
 
     private var drag: Drag = .none
@@ -1746,8 +1745,7 @@ final class DesktopModel: ObservableObject {
     }
 
     func workspaceCellRect(_ n: Int) -> CGRect {
-        CGRect(x: Layout.workspaceX + CGFloat(n) * Layout.workspaceCell, y: taskbarTop + 4,
-               width: Layout.workspaceCell, height: Layout.buttonHeight)
+        dockSlots.first { $0.kind == .workspace(n) }?.rect ?? .zero
     }
 
     func nextWallpaper() {
@@ -1805,20 +1803,99 @@ final class DesktopModel: ObservableObject {
 
     // MARK: Taskbar / app menu / icon geometry
 
-    var startButtonRect: CGRect {
-        CGRect(x: Layout.startX, y: taskbarTop + 4, width: Layout.startWidth, height: Layout.buttonHeight)
+    // MARK: Dock layout (0.9.18)
+
+    /// The strip the dock pill floats in: the bottom of the screen, left of the tray pill and of
+    /// any record / downloads pills.
+    var dockArea: CGRect {
+        var right = trayRect.minX
+        if let r = downloadsButtonRect { right = r.minX }
+        if let r = recordButtonRect { right = r.minX }
+        return CGRect(x: 8, y: screenSize.height - Layout.dockBottom - Layout.dockHeight,
+                      width: max(0, right - 8 - 8), height: Layout.dockHeight)
     }
+
+    private var dockCells: Int { workspacesEnabled ? Self.workspaceCount : 0 }
+
+    /// Slot width: 34, shrinking towards 26 when the dock is crowded (as a dock does).
+    private var dockIconSize: CGFloat {
+        let apps = taskEntries.count, count = 5 + dockCells + apps
+        var fixed = Layout.dockPad * 2 + Layout.dockGap * CGFloat(count - 1)
+            + CGFloat(dockCells) * Layout.workspaceCell
+        if apps > 0 { fixed += Layout.dockDivider - Layout.dockGap }   // the divider replaces one gap
+        let per = (dockArea.width - fixed) / CGFloat(5 + apps)
+        return min(Layout.dockIcon, max(Layout.dockIconMin, per.rounded(.down)))
+    }
+
+    private var dockContentWidth: CGFloat {
+        let apps = taskEntries.count, count = 5 + dockCells + apps, s = dockIconSize
+        var w = Layout.dockPad * 2 + Layout.dockGap * CGFloat(count - 1)
+            + CGFloat(dockCells) * Layout.workspaceCell + CGFloat(5 + apps) * s
+        if apps > 0 { w += Layout.dockDivider - Layout.dockGap }
+        return min(w, dockArea.width)
+    }
+
+    /// The dock pill, centered in its strip.
+    var dockRect: CGRect {
+        let area = dockArea, w = dockContentWidth
+        return CGRect(x: area.minX + (area.width - w) / 2, y: area.minY, width: w, height: area.height).integral
+    }
+
+    /// Every slot in the dock, in order: the system buttons, the workspace cells when on, then the
+    /// apps (pinned first). Apps that do not fit are left out — Recent apps and ⌘+Tab reach them —
+    /// rather than running under the tray.
+    var dockSlots: [DockSlot] {
+        let s = dockIconSize
+        var items: [DockSlot] = [DockSlot(kind: .launcher, entry: nil, rect: .zero),
+                                 DockSlot(kind: .search, entry: nil, rect: .zero),
+                                 DockSlot(kind: .recents, entry: nil, rect: .zero),
+                                 DockSlot(kind: .home, entry: nil, rect: .zero),
+                                 DockSlot(kind: .back, entry: nil, rect: .zero)]
+        for n in 0..<dockCells { items.append(DockSlot(kind: .workspace(n), entry: nil, rect: .zero)) }
+        for e in taskEntries { items.append(DockSlot(kind: nil, entry: e, rect: .zero)) }
+        let limit = dockRect.maxX - Layout.dockPad + 0.5
+        var x = dockRect.minX + Layout.dockPad
+        var slots: [DockSlot] = []
+        let y = dockRect.minY + (Layout.dockHeight - Layout.buttonHeight) / 2
+        for (i, item) in items.enumerated() {
+            let w = item.kind == nil ? s : (item.kind.map { if case .workspace = $0 { return Layout.workspaceCell } else { return s } } ?? s)
+            guard x + w <= limit else { break }   // left out: Recent apps and ⌘+Tab reach it
+            slots.append(DockSlot(kind: item.kind, entry: item.entry,
+                                  rect: CGRect(x: x, y: y, width: w, height: Layout.buttonHeight).integral))
+            x += w
+            if i < items.count - 1 {
+                x += items[i + 1].entry != nil && item.entry == nil ? Layout.dockDivider : Layout.dockGap
+            }
+        }
+        return slots
+    }
+
+    /// The hairline in the dock between the buttons and the apps (nil when there are no apps).
+    var dockDividerRect: CGRect? {
+        guard let first = dockSlots.firstIndex(where: { $0.entry != nil }), first > 0 else { return nil }
+        let mid = (dockSlots[first - 1].rect.maxX + dockSlots[first].rect.minX) / 2
+        return CGRect(x: mid - 0.5, y: dockRect.minY + 12, width: 1, height: Layout.dockHeight - 24)
+    }
+
+    var startButtonRect: CGRect { dockSlots.first { $0.kind == .launcher }?.rect ?? .zero }
 
     func navButtonRect(_ b: NavButton) -> CGRect {
-        let i = CGFloat(NavButton.allCases.firstIndex(of: b)!)
-        return CGRect(x: Layout.navX + i * (Layout.navWidth + Layout.navGap), y: taskbarTop + 4,
-                      width: Layout.navWidth, height: Layout.buttonHeight)
+        let kind: DockSlot.Kind
+        switch b {
+        case .search: kind = .search
+        case .recents: kind = .recents
+        case .home: kind = .home
+        case .back: kind = .back
+        }
+        return dockSlots.first { $0.kind == kind }?.rect ?? .zero
     }
 
+    /// The tray pill, floating at the right of the dock's strip (0.9.18).
     var trayRect: CGRect {
         let w = Layout.trayWidth(for: screenSize.width)
-        return CGRect(x: screenSize.width - Layout.showDesktopWidth - w, y: taskbarTop,
-                      width: w, height: Layout.taskbar)
+        return CGRect(x: screenSize.width - Layout.showDesktopWidth - w,
+                      y: screenSize.height - Layout.dockBottom - Layout.dockHeight,
+                      width: w, height: Layout.dockHeight).integral
     }
 
     /// Where a minimized window shrinks to: its taskbar button, or — when the button does not fit
@@ -1828,29 +1905,15 @@ final class DesktopModel: ObservableObject {
     }
 
     var showDesktopRect: CGRect {
-        CGRect(x: screenSize.width - Layout.showDesktopWidth, y: taskbarTop,
-               width: Layout.showDesktopWidth, height: Layout.taskbar)
+        CGRect(x: screenSize.width - Layout.showDesktopWidth,
+               y: screenSize.height - Layout.dockBottom - Layout.dockHeight,
+               width: Layout.showDesktopWidth, height: Layout.dockHeight)
     }
 
-    /// Taskbar entries and where they are: a pinned app that is not open is just an icon, an open window
-    /// gets a button with its title.
+    /// The dock's app slots (pinned first), icon-only, for clicks, hover previews and the minimize
+    /// flight (0.9.18 — they used to be labelled buttons on a full-width bar).
     var taskLayout: [(entry: TaskEntry, rect: CGRect)] {
-        let entries = taskEntries
-        let icons = entries.filter { $0.window == nil }.count
-        let buttons = entries.count - icons
-        let end = (recordButtonRect?.minX ?? downloadsButtonRect?.minX ?? trayRect.minX) - 8
-        let avail = end - Layout.taskItemX - CGFloat(icons) * (Layout.pinnedWidth + Layout.taskItemGap)
-        // Many windows: buttons shrink down to just the icon; those that still do not fit are left out (Recent
-        // apps and Alt+Tab reach them) rather than running under the tray.
-        let width = buttons == 0 ? 0 : max(Layout.pinnedWidth, min(Layout.taskItemMaxWidth,
-            (avail - Layout.taskItemGap * CGFloat(buttons - 1)) / CGFloat(buttons)))
-        var x = Layout.taskItemX
-        return entries.compactMap { entry in
-            let w = entry.window == nil ? Layout.pinnedWidth : width
-            guard x + w <= end else { return nil }
-            defer { x += w + Layout.taskItemGap }
-            return (entry, CGRect(x: x, y: taskbarTop + 4, width: w, height: Layout.buttonHeight))
-        }
+        dockSlots.compactMap { slot in slot.entry.map { ($0, slot.rect) } }
     }
 
     var launcherRect: CGRect {
