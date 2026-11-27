@@ -56,18 +56,22 @@ struct DesktopView: View {
 
                 if model.showLauncher {
                     LauncherView(model: model, cursor: model.cursor)
+                        .panelAppear(.bottom)
                 }
 
                 if model.showSpotlight {
                     SpotlightView(model: model, cursor: model.cursor)
+                        .panelAppear(.center)
                 }
 
                 if model.showClipboard {
                     ClipboardPanelView(model: model, cursor: model.cursor)
+                        .panelAppear(.bottom)
                 }
 
                 if model.showDownloads {
                     DownloadsPanelView(model: model, cursor: model.cursor)
+                        .panelAppear(.bottom)
                 }
 
                 if model.showEmoji {
@@ -94,10 +98,12 @@ struct DesktopView: View {
                 if let recents = model.recents {
                     RecentsView(model: model, recents: recents, cursor: model.cursor)
                         .frame(width: geo.size.width, height: geo.size.height)
+                        .panelAppear(.bottom)
                 }
 
                 if model.showQuickPanel {
                     QuickPanelView(model: model, cursor: model.cursor)
+                        .panelAppear(.bottomTrailing)
                 }
 
                 if let banner = model.banner {
@@ -318,6 +324,7 @@ private struct WindowView: View {
     @ObservedObject private var browsing = Browsing.shared      // the bookmarks bar comes and goes with bookmarks
     let focused: Bool
     let cursor: CursorModel
+    @State private var appeared = false                          // open animation (0.9.21)
 
     var body: some View {
         let f = window.frame
@@ -357,8 +364,13 @@ private struct WindowView: View {
                 .stroke(focused ? Color.accentColor.opacity(0.7) : Color.white.opacity(0.12),
                         lineWidth: window.isFullscreen ? 0 : 1)
         )
+        .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous)
+            .fill(Color.black.opacity(focused || window.isFullscreen ? 0 : 0.12))
+            .allowsHitTesting(false))   // unfocused windows sit back a little (0.9.21)
         .shadow(color: .black.opacity(focused ? 0.5 : 0.25), radius: focused ? 24 : 10, y: 8)
         .offset(x: f.minX, y: f.minY)
+        .scaleEffect(window.isClosing ? 0.94 : appeared ? 1 : 0.93)
+        .onAppear { withAnimation(.easeOut(duration: 0.18)) { appeared = true } }
         // Minimized: shrink into the window's taskbar button (or Recent apps when the button does
         // not fit on a narrow bar), so it shows where the window went; on another workspace: fade
         // in place (0.9.17 — it used to vanish without a trace).
@@ -369,7 +381,8 @@ private struct WindowView: View {
                 ? CGSize(width: DesktopModel.shared.minimizeTarget(for: window.id).midX - f.midX,
                          height: DesktopModel.shared.minimizeTarget(for: window.id).midY - f.midY)
                 : .zero)
-        .opacity(window.isShown ? 1 : 0)   // keep the web view alive while minimized or on another workspace
+        .opacity(window.isShown ? (window.isClosing || !appeared ? 0 : 1) : 0)   // keep the web view alive while minimized or on another workspace
+        .allowsHitTesting(!window.isClosing)
     }
 }
 
@@ -818,7 +831,10 @@ private struct TaskbarView: View {
         ZStack(alignment: .topLeading) {
             pill(model.dockRect)
             ForEach(Array(model.dockSlots.enumerated()), id: \.offset) { _, slot in
+                let m = magnify(slot.rect, p)
                 slotView(slot, p)
+                    .scaleEffect(m, anchor: .bottom)
+                    .animation(.easeOut(duration: 0.12), value: m)
                     .offset(x: slot.rect.minX, y: slot.rect.minY)
             }
             if let r = model.dockDividerRect {
@@ -845,6 +861,15 @@ private struct TaskbarView: View {
                 .frame(width: model.showDesktopRect.width, height: model.showDesktopRect.height)
                 .offset(x: model.showDesktopRect.minX, y: model.showDesktopRect.minY)
         }
+    }
+
+    /// Dock magnification (0.9.21): icons near the cursor grow, bottom-anchored like macOS.
+    /// Visual-only: slot rects and hit-testing are untouched. Only while the cursor is over the dock.
+    private func magnify(_ slot: CGRect, _ p: CGPoint) -> CGFloat {
+        guard model.dockRect.insetBy(dx: -14, dy: -20).contains(p) else { return 1 }
+        let d = abs(slot.midX - p.x)
+        let range: CGFloat = 92
+        return 1 + 0.32 * max(0, 1 - d / range)
     }
 
     private func pill(_ r: CGRect) -> some View {
@@ -1518,7 +1543,24 @@ private struct ContextMenuView: View {
 
 // MARK: - Panels
 
+/// One-shot appear animation for floating panels (0.9.21): slight grow + fade, anchored so a
+/// panel above the dock feels like it rises out of it. Dismissal stays instant on purpose.
+private struct PanelAppear: ViewModifier {
+    let anchor: UnitPoint
+    @State private var shown = false
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(shown ? 1 : 0.95, anchor: anchor)
+            .opacity(shown ? 1 : 0)
+            .onAppear { withAnimation(.easeOut(duration: 0.16)) { shown = true } }
+    }
+}
+
 extension View {
+    /// Panels grow and fade in from their anchor (dock for bottom panels) instead of popping (0.9.21).
+    func panelAppear(_ anchor: UnitPoint) -> some View { modifier(PanelAppear(anchor: anchor)) }
+
     /// The look of the panels that float over the desktop (app menu, Spotlight, menus…): frosted glass, a thin
     /// light edge and a soft shadow.
     func floatingPanel(cornerRadius r: CGFloat, shadow: CGFloat = 20) -> some View {

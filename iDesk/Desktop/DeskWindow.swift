@@ -41,6 +41,8 @@ final class DeskWindow: NSObject, ObservableObject, Identifiable, WKUIDelegate, 
     @Published var frame: CGRect
     @Published var title = String(localized: "New window")
     @Published var isMinimized = false
+    /// Close animation in flight: the window fades and shrinks, then the model removes it (0.9.21).
+    @Published var isClosing = false
     @Published var isMaximized = false
     /// Stays above the other windows even when another one is focused (window menu → Keep on top).
     @Published var keepOnTop = false

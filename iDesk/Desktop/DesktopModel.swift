@@ -1355,7 +1355,18 @@ final class DesktopModel: ObservableObject {
         }
     }
 
+    /// Close button / Recents: fade and shrink first (0.9.21), then really close. All the side
+    /// effects (bookkeeping, suspending a guest app) happen when the window actually goes away.
     func close(_ w: DeskWindow) {
+        guard !w.isClosing else { return }
+        withAnimation(.easeIn(duration: 0.16)) { w.isClosing = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self, weak w] in
+            guard let self, let w, w.isClosing else { return }
+            self.finishClose(w)
+        }
+    }
+
+    private func finishClose(_ w: DeskWindow) {
         if w.isBrowser, !w.tabs.isEmpty { remember(.window(w.tabs.indices.map { w.url(ofTab: $0) }, frame: w.frame)) }
         rememberFrame(of: w)
         w.webView?.stopLoading()
