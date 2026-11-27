@@ -121,6 +121,7 @@ struct Shortcut {
     let url: String
     let hue: Double
     var app: GuestApp? = nil      // non-nil: an app installed from an IPA rather than a web page
+    var iosApp: IOSAppEntry? = nil  // non-nil: an iPhone app (container/catalog/manual, 0.9.20)
     var file: String? = nil       // non-nil: a file in Files (its name in Downloads), put on the desktop
     var webApp = false            // a website installed as an app (WebApps): opens in its own window
 }
@@ -298,9 +299,11 @@ final class DesktopModel: ObservableObject {
         }
     }
     @Published var isExternalConnected = false
+    @Published var launcherScroll: CGFloat = 0
     @Published var showLauncher = false {
         didSet {
-            if !showLauncher { launcherQuery = "" }
+            if !showLauncher { launcherQuery = ""; launcherScroll = 0 }
+            else { Task { @MainActor in IOSAppsStore.shared.refresh() } }   // newly installed apps appear as the menu opens
             if showLauncher != oldValue { Self.typingTargetChanged() }
         }
     }
@@ -392,6 +395,7 @@ final class DesktopModel: ObservableObject {
     @Published var selectedIcon: Int?
     @Published var notice: String?                 // error message shown on the iPhone
     @Published private(set) var apps: [GuestApp] = []
+    @Published private(set) var iosApps: [IOSAppEntry] = []
     /// Wallpaper: 0…n are the built-in gradients, -1 is the user's photo (`customWallpaper`).
     @Published var wallpaper: Int = UserDefaults.standard.integer(forKey: Keys.wallpaper) {
         didSet {
@@ -591,6 +595,7 @@ final class DesktopModel: ObservableObject {
     private var saveWork: DispatchWorkItem?
     private var switcherCommit: DispatchWorkItem?
     private var appsSubscription: AnyCancellable?
+    private var iosAppsSubscription: AnyCancellable?
     private var pagesSubscription: AnyCancellable?
     private var browsingSubscription: AnyCancellable?
     private var updatesSubscription: AnyCancellable?
@@ -617,6 +622,10 @@ final class DesktopModel: ObservableObject {
                                                object: nil, queue: .main) { [weak self] _ in self?.batteryChanged() }
         ContentBlocker.prepare()
         appsSubscription = GuestStore.shared.$apps.sink { [weak self] in self?.apps = $0 }
+        iosAppsSubscription = IOSAppsStore.shared.$entries.sink { [weak self] in self?.iosApps = $0 }
+        Task { @MainActor in IOSAppsStore.shared.refresh() }
+        NotificationCenter.default.addObserver(self, selector: #selector(iosAppOpenFailed(_:)),
+                                               name: .iosAppOpenFailed, object: nil)
         browsingSubscription = Browsing.shared.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }
         updatesSubscription = UpdateChecker.shared.objectWillChange.sink { [weak self] in
             DispatchQueue.main.async { self?.objectWillChange.send() }
@@ -674,6 +683,7 @@ final class DesktopModel: ObservableObject {
         let own = builtIn.filter(isOwn), web = builtIn.filter { !isOwn($0) }
         let webApps = WebApps.shared.all.map { Shortcut(name: $0.title, symbol: "app.badge", url: $0.url, hue: Self.hue(for: $0.url), webApp: true) }
         return web + links + webApps + own + apps.map { Shortcut(name: $0.name, symbol: "app.fill", url: "", hue: 0.5, app: $0) }
+            + iosApps.map { Shortcut(name: $0.name, symbol: $0.symbol, url: "", hue: $0.hue, iosApp: $0) }
     }
 
     /// A stable colour per site for the icon of a page added to the desktop.
@@ -684,12 +694,18 @@ final class DesktopModel: ObservableObject {
 
     func open(_ item: Shortcut) {
         noteRecent(item)
+        if let ios = item.iosApp { IOSAppsStore.shared.open(ios); return }
         if let app = item.app { openApp(app) }
         else if let file = item.file { openFile(file) }
         else if item.url == Self.trashURL { openFile(Trash.folder) }
         else if item.url == Self.terminalURL { openTerminal() }
         else if item.webApp { openWebApp(item.url) }
         else { openWindow(item.url) }
+    }
+
+    @objc private func iosAppOpenFailed(_ note: Notification) {
+        let name = note.object as? String ?? "The app"
+        showToast(String(localized: "“\(name)” could not be opened — it may have been removed."))
     }
 
     /// A file from Files (a path inside it): text files in the editor, others in a browser window; a folder in a
@@ -874,7 +890,7 @@ final class DesktopModel: ObservableObject {
     // MARK: Pinned apps (taskbar)
 
     static func key(of item: Shortcut) -> String {
-        item.app?.id ?? item.file.map { "file:" + $0 } ?? (item.webApp ? "webapp:" + item.url : item.url)
+        item.iosApp.map { "ios:" + $0.id } ?? item.app?.id ?? item.file.map { "file:" + $0 } ?? (item.webApp ? "webapp:" + item.url : item.url)
     }
 
     var pinnedItems: [Shortcut] {
@@ -911,7 +927,7 @@ final class DesktopModel: ObservableObject {
 
     /// The "Search the web" row shown in the app menu when no app matches.
     /// The app menu ends with how to add iOS apps while there are none (and nothing is typed).
-    var launcherShowsAppsHint: Bool { apps.isEmpty && launcherQuery.isEmpty }
+    var launcherShowsAppsHint: Bool { apps.isEmpty && iosApps.isEmpty && launcherQuery.isEmpty }
 
     var launcherAppsHintRect: CGRect {
         let r = launcherRect
@@ -1916,17 +1932,31 @@ final class DesktopModel: ObservableObject {
         dockSlots.compactMap { slot in slot.entry.map { ($0, slot.rect) } }
     }
 
-    var launcherRect: CGRect {
+    /// Full height of the app menu's content before it is clamped to the screen (0.9.20: the menu
+    /// can hold many iPhone apps, so it scrolls instead of growing past the top edge).
+    private var launcherContentHeight: CGFloat {
         let cols = Layout.launcherColumns, recents = launcherRecents.count, count = launcherItems.count
         // With a Recent row: that row, then the apps from a new row, each under its own title.
         let rows = CGFloat(max(1, recents > 0 ? 1 + (count - recents + cols - 1) / cols : (count + cols - 1) / cols))
         let t = Layout.launcherTile, g = Layout.launcherGap, pad = Layout.launcherPadding
-        let w = pad * 2 + CGFloat(cols) * t.width + CGFloat(cols - 1) * g
         let titles = recents > 0 ? Layout.launcherSectionTitle * 2 : 0
         let footer = launcherShowsAppsHint ? Layout.launcherFooter : 0
-        let h = pad * 2 + Layout.launcherHeader + titles + rows * t.height + max(0, rows - 1) * g + footer
-        return CGRect(x: 8, y: max(8, taskbarTop - h - 8), width: w, height: h)
+        return pad * 2 + Layout.launcherHeader + titles + rows * t.height + max(0, rows - 1) * g + footer
     }
+
+    var launcherRect: CGRect {
+        let cols = Layout.launcherColumns
+        let t = Layout.launcherTile, g = Layout.launcherGap, pad = Layout.launcherPadding
+        let w = pad * 2 + CGFloat(cols) * t.width + CGFloat(cols - 1) * g
+        let h = min(launcherContentHeight, taskbarTop - 16)
+        return CGRect(x: 8, y: taskbarTop - h - 8, width: w, height: h)
+    }
+
+    /// How far the app menu's content can scroll; zero while everything fits.
+    var launcherMaxScroll: CGFloat { max(0, launcherContentHeight - launcherRect.height) }
+
+    /// launcherScroll clamped to what the current content allows (typing shrinks the list).
+    var launcherEffectiveScroll: CGFloat { min(max(0, launcherScroll), launcherMaxScroll) }
 
     func launcherItemRect(_ i: Int) -> CGRect {
         let r = launcherRect, t = Layout.launcherTile, g = Layout.launcherGap, pad = Layout.launcherPadding
@@ -1938,7 +1968,7 @@ final class DesktopModel: ObservableObject {
             else { row = 1 + (i - recents) / cols; col = (i - recents) % cols; titles += Layout.launcherSectionTitle }
         }
         return CGRect(x: r.minX + pad + CGFloat(col) * (t.width + g),
-                      y: r.minY + pad + Layout.launcherHeader + titles + CGFloat(row) * (t.height + g),
+                      y: r.minY + pad + Layout.launcherHeader + titles + CGFloat(row) * (t.height + g) - launcherEffectiveScroll,
                       width: t.width, height: t.height)
     }
 
@@ -2817,6 +2847,10 @@ final class DesktopModel: ObservableObject {
     func scroll(dx: CGFloat, dy: CGFloat) {
         if isLocked || showScreenSaver { noteInput(); return }
         let p = cursor.position
+        if showLauncher {
+            if launcherRect.contains(p) { launcherScroll = min(max(0, launcherScroll + dy), launcherMaxScroll) }
+            return
+        }
         if quickLook != nil {
             if quickLookRect.contains(p) { QuickLook.scroll(dx: dx, dy: dy) }
             return

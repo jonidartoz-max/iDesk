@@ -220,9 +220,11 @@ struct WallpaperView: View {
 struct AppIcon: View {
     let shortcut: Shortcut
     let size: CGFloat
+    @ObservedObject private var iosApps = IOSAppsStore.shared
 
     var body: some View {
-        if let icon = shortcut.app?.icon ?? (shortcut.webApp ? WebApps.shared.icon(for: shortcut.url) : nil) {
+        if let icon = shortcut.app?.icon ?? shortcut.iosApp.flatMap({ iosApps.icons[$0.id] })
+            ?? (shortcut.webApp ? WebApps.shared.icon(for: shortcut.url) : nil) {
             Image(uiImage: icon)
                 .resizable()
                 .frame(width: size, height: size)
@@ -1045,6 +1047,7 @@ private struct LauncherView: View {
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.08)))
             .offset(x: Layout.launcherPadding, y: Layout.launcherPadding + 34)
 
+            Group {
             if model.launcherItems.isEmpty {
                 // Nothing matches: Enter (or a click here) searches the web for what was typed.
                 let t = model.launcherSearchRect
@@ -1098,6 +1101,13 @@ private struct LauncherView: View {
                 .background(RoundedRectangle(cornerRadius: 10).fill(hovered ? Color.white.opacity(0.14) : .clear))
                 .offset(x: t.minX - r.minX, y: t.minY - r.minY)
             }
+            }
+            // Scrolled items stay below the header and above the footer hint (0.9.20).
+            .mask(Rectangle()
+                .frame(width: r.width,
+                       height: r.height - Layout.launcherPadding - Layout.launcherHeader
+                           - (model.launcherShowsAppsHint ? Layout.launcherFooter : 0))
+                .offset(x: 0, y: Layout.launcherPadding + Layout.launcherHeader))
         }
         .frame(width: r.width, height: r.height, alignment: .topLeading)
         .floatingPanel(cornerRadius: 16)

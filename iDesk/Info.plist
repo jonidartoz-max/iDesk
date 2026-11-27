@@ -33,6 +33,58 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>whatsapp</string>
+		<string>tg</string>
+		<string>instagram</string>
+		<string>snssdk1128</string>
+		<string>fb</string>
+		<string>twitter</string>
+		<string>youtube</string>
+		<string>spotify</string>
+		<string>gojek</string>
+		<string>grab</string>
+		<string>shopeeid</string>
+		<string>tokopedia</string>
+		<string>dana</string>
+		<string>ovo</string>
+		<string>nflx</string>
+		<string>discord</string>
+		<string>line</string>
+		<string>capcut</string>
+		<string>pinterest</string>
+		<string>googlegmail</string>
+		<string>comgooglemaps</string>
+		<string>googlechrome</string>
+		<string>googledrive</string>
+		<string>zoomus</string>
+		<string>roblox</string>
+		<string>pubgm</string>
+		<string>mobilelegends</string>
+		<string>reddit</string>
+		<string>snapchat</string>
+		<string>twitch</string>
+		<string>googlephotos</string>
+		<string>google</string>
+		<string>duolingo</string>
+		<string>app-settings</string>
+		<string>tel</string>
+		<string>sms</string>
+		<string>mailto</string>
+		<string>maps</string>
+		<string>music</string>
+		<string>photos-redirect</string>
+		<string>facetime</string>
+		<string>itms-apps</string>
+		<string>shareddocuments</string>
+		<string>mobilenotes</string>
+		<string>calshow</string>
+		<string>zcontainer</string>
+		<string>livecontainer</string>
+		<string>livecontainer2</string>
+		<string>livecontainer3</string>
+	</array>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<false/>
 	<key>NFCReaderUsageDescription</key>

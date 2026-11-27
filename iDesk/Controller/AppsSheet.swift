@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct AppsSheet: View {
     @ObservedObject var model: DesktopModel
     @ObservedObject private var store = GuestStore.shared
+    @ObservedObject private var iosApps = IOSAppsStore.shared
     @ObservedObject private var signing = SigningStore.shared
     @Environment(\.dismiss) private var dismiss
 
@@ -13,6 +14,8 @@ struct AppsSheet: View {
     @State private var message: String?
     @State private var exportProgress: Double?          // exporting the package for the signing app
     @State private var showAdvanced = false
+    @State private var manualName = ""
+    @State private var manualScheme = ""
 
     var body: some View {
         NavigationStack {
@@ -56,6 +59,38 @@ struct AppsSheet: View {
                     }
                 } footer: {
                     Text("Decrypted IPAs only. Swipe left to delete an app or remove it from iDesk to save space. Several apps can run at once; each one uses memory, so iOS may close iDesk if too many are open.")
+                }
+
+                Section {
+                    if iosApps.manualEntries.isEmpty {
+                        Text("Apps on this iPhone that iDesk knows appear in the app menu by themselves. Add one by hand when it is missing.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(iosApps.manualEntries) { entry in
+                        HStack {
+                            Label(entry.name, systemImage: "link")
+                            Spacer()
+                            Text(verbatim: entry.scheme ?? "").foregroundStyle(.secondary)
+                        }
+                        .swipeActions { Button("Delete", role: .destructive) { iosApps.removeManual(entry) } }
+                    }
+                    TextField("App name", text: $manualName)
+                    HStack {
+                        TextField("URL scheme (e.g. whatsapp)", text: $manualScheme)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        Button("Add") {
+                            iosApps.addManual(name: manualName, scheme: manualScheme)
+                            manualName = ""; manualScheme = ""
+                        }
+                        .disabled(manualName.trimmingCharacters(in: .whitespaces).isEmpty
+                                  || manualScheme.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                } header: {
+                    Text("iPhone apps (URL scheme)")
+                } footer: {
+                    Text("The app opens through its URL scheme. Many apps accept one; the scheme is the part before “://”.")
                 }
 
                 #if !targetEnvironment(simulator)
